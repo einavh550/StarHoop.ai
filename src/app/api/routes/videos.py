@@ -20,6 +20,20 @@ def _calculate_progress_percent(total_frames: int | None, processed_frames: int)
     return round(min(progress_percent, 100.0), 1)
 
 
+def _calculate_processing_duration_sec(created_at, updated_at) -> float | None:
+    duration = (updated_at - created_at).total_seconds()
+    if duration < 0:
+        return None
+    return round(duration, 1)
+
+
+def _calculate_throughput_fps(processed_frames: int, processing_duration_sec: float | None) -> float | None:
+    if processing_duration_sec is None or processing_duration_sec <= 0:
+        return None
+
+    return round(processed_frames / processing_duration_sec, 2)
+
+
 @router.post("/upload", response_model=VideoUploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_video(
     background_tasks: BackgroundTasks,
@@ -78,6 +92,11 @@ def get_video_job_status(job_id: int, db: Session = Depends(get_db)) -> VideoJob
         total_frames=job.total_frames,
         processed_frames=job.processed_frames,
         progress_percent=_calculate_progress_percent(job.total_frames, job.processed_frames),
+        processing_duration_sec=_calculate_processing_duration_sec(job.created_at, job.updated_at),
+        throughput_fps=_calculate_throughput_fps(
+            job.processed_frames,
+            _calculate_processing_duration_sec(job.created_at, job.updated_at),
+        ),
         error_message=job.error_message,
         created_at=job.created_at,
         updated_at=job.updated_at,

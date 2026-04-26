@@ -40,6 +40,8 @@ class VideoJobStatusResponse(BaseModel):
     total_frames: int | None = None
     processed_frames: int = 0
     progress_percent: float | None = None
+    processing_duration_sec: float | None = None
+    throughput_fps: float | None = None
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime

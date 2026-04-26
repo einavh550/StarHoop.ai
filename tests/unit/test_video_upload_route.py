@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -96,6 +96,9 @@ def test_upload_video_returns_404_when_team_missing(monkeypatch) -> None:
 
 
 def test_get_video_job_status_returns_payload() -> None:
+    created_at = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
+    updated_at = created_at + timedelta(seconds=30)
+
     fake_db = _FakeDB(team_exists=True)
     fake_db.jobs[42] = VideoJob(
         id=42,
@@ -106,10 +109,10 @@ def test_get_video_job_status_returns_payload() -> None:
         tracker_name="bytetrack",
         model_name="yolov8n.pt",
         total_frames=180,
-        processed_frames=180,
+        processed_frames=90,
         error_message=None,
-        created_at=datetime.now(tz=timezone.utc),
-        updated_at=datetime.now(tz=timezone.utc),
+        created_at=created_at,
+        updated_at=updated_at,
     )
 
     app.dependency_overrides[get_db] = _override_db(fake_db)
@@ -123,4 +126,6 @@ def test_get_video_job_status_returns_payload() -> None:
     payload = response.json()
     assert payload["job_id"] == 42
     assert payload["status"] == "completed"
-    assert payload["progress_percent"] == 100.0
+    assert payload["progress_percent"] == 50.0
+    assert payload["processing_duration_sec"] == 30.0
+    assert payload["throughput_fps"] == 3.0
