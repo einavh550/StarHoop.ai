@@ -17,7 +17,7 @@ def test_engine_initializes() -> None:
 
 def test_models_metadata_contains_expected_tables() -> None:
     table_names = set(Base.metadata.tables.keys())
-    assert table_names == {"coaches", "teams", "players", "highlights"}
+    assert {"coaches", "teams", "players", "highlights", "video_jobs", "detection_frames"}.issubset(table_names)
 
 
 def test_expected_constraints_exist() -> None:

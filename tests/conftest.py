@@ -21,7 +21,9 @@ def integration_engine():
 
     Base.metadata.create_all(bind=engine)
     yield engine
-    Base.metadata.drop_all(bind=engine)
+    # Avoid destructive teardown when tests are pointed at the same DB used by the app.
+    if settings.test_database_url != settings.database_url:
+        Base.metadata.drop_all(bind=engine)
     engine.dispose()
 
 
