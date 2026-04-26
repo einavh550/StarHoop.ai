@@ -39,3 +39,4 @@ class VideoJob(Base):
 
     team = relationship("Team", back_populates="video_jobs")
     detection_frames = relationship("DetectionFrame", back_populates="video_job", cascade="all, delete-orphan")
+    jersey_detections = relationship("JerseyDetection", back_populates="video_job", cascade="all, delete-orphan")
