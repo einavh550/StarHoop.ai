@@ -47,3 +47,27 @@ class VideoJobStatusResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PlayerMappingSuggestion(BaseModel):
+    """Suggested player mapping for a detected track_id."""
+    track_id: int
+    detected_jersey: int
+    frame_count: int
+    confidence_mean: float
+    confidence_max: float
+    suggested_player_id: int | None = None
+    suggested_player_name: str | None = None
+    match_rating: str  # 'high', 'medium', 'low', 'no_match'
+
+
+class PlayerMappingResponse(BaseModel):
+    """Player mapping suggestions for a video job."""
+    job_id: int
+    team_id: int
+    total_mappings: int
+    high_confidence_count: int
+    medium_confidence_count: int
+    low_confidence_count: int
+    no_match_count: int
+    mappings: list[PlayerMappingSuggestion] = Field(default_factory=list)
