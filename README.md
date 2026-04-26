@@ -28,14 +28,15 @@ Infrastructure: PostgreSQL (Docker) and Firebase (media storage in later milesto
 
 ## Current Milestone Status
 
-- Milestone 1: Complete (schema, migrations, base API, tests)
-- Milestone 2: Implemented and validated on real video (upload -> processing -> completed)
-- Milestone 3: Planned
-- Milestone 4: Planned
-- Milestone 5: Planned
-- Milestone 6: Planned
+- Milestone 1: ✅ Complete (schema, migrations, base API, tests)
+- Milestone 2: ✅ Complete (YOLOv8 + ByteTrack detection + tracking, persistence)
+- Milestone 3 (Phase 1): ✅ Complete (Jersey OCR extraction via PaddleOCR)
+- Milestone 3 (Phase 2): ✅ Complete (Player identity mapping - jersey_detections table + auto-mapping endpoint)
+- Milestone 4: Planned (Action recognition - spatio-temporal analysis)
+- Milestone 5: Planned (Video clipping engine)
+- Milestone 6: Planned (Mobile integration)
 
-Important: `track_id` is a tracker identity assigned by ByteTrack. It is not jersey identity.
+Important: `track_id` is a tracker identity assigned by ByteTrack. Jersey numbers are recognized via PaddleOCR in M3P1 and mapped to Player records in M3P2.
 
 ## Quick Start (Recommended: Docker Compose)
 

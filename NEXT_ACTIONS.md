@@ -1,11 +1,14 @@
-﻿# NEXT ACTIONS - StarHoop.ai Milestone 2
+﻿# NEXT ACTIONS - StarHoop.ai (April 27, 2026)
 
 ## Status Snapshot
 
-- Upload and status APIs are working.
-- Real video processing reached `completed` with full frame coverage.
-- ByteTrack is active.
-- DeepSORT remains scaffold-only and is not required for Milestone 2 signoff.
+**Milestone 3 Phase 2 (Player Identity Mapping)**: ✅ COMPLETE
+- Jersey detection aggregation table (jersey_detections)
+- Auto-mapping endpoint: `POST /api/videos/{job_id}/player_mapping/auto`
+- Maps detected jersey numbers to Player records per team
+- Confidence rating system (high/medium/low/no_match)
+- All tests passing (12 unit + 9 integration)
+- Migration applied via Alembic
 
 ## Immediate Actions (Do First)
 
