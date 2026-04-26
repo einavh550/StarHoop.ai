@@ -6,6 +6,16 @@ class Settings(BaseSettings):
     test_database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/starhoop"
     app_env: str = "development"
 
+    cv_model_path: str = "yolov8n.pt"
+    cv_confidence_threshold: float = 0.5
+    cv_min_player_height_px: int = 50
+    cv_tracker: str = "bytetrack"
+    cv_target_fps: int = 30
+
+    max_upload_size_mb: int = 500
+    video_storage_dir: str = "uploads/videos"
+    allowed_video_extensions: str = ".mp4,.mov,.avi,.mkv"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

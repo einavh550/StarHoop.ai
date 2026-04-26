@@ -21,3 +21,4 @@ class Team(Base):
 
     coach = relationship("Coach", back_populates="teams")
     players = relationship("Player", back_populates="team", cascade="all, delete-orphan")
+    video_jobs = relationship("VideoJob", back_populates="team", cascade="all, delete-orphan")
