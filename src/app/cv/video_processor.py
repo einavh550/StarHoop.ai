@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.cv.detection import YOLODetector
+from app.cv.ocr import JerseyRecognizer
 from app.cv.tracking import build_tracker
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.video_job import VideoJob
@@ -28,9 +29,10 @@ def _to_decimal_seconds(raw_value: float) -> Decimal:
 
 
 class VideoProcessor:
-    def __init__(self, detector: YOLODetector, target_fps: int) -> None:
+    def __init__(self, detector: YOLODetector, target_fps: int, jersey_recognizer: JerseyRecognizer | None = None) -> None:
         self.detector = detector
         self.target_fps = max(target_fps, 1)
+        self.jersey_recognizer = jersey_recognizer or JerseyRecognizer(confidence_threshold=0.7)
 
     def process_job(self, db: Session, job: VideoJob) -> None:
         cv2 = _import_cv2_module()
@@ -71,6 +73,23 @@ class VideoProcessor:
 
                 detection_payload = []
                 for detection in tracked_detections:
+                    # Extract jersey number from the bounding box crop
+                    jersey_num = None
+                    jersey_conf = 0.0
+                    try:
+                        bbox_crop = self.jersey_recognizer.preprocess_bbox_crop(
+                            frame=frame,
+                            bbox=detection.bbox.model_dump(),
+                            pad_percent=0.05
+                        )
+                        jersey_num, jersey_conf = self.jersey_recognizer.extract_jersey_from_bbox(bbox_crop)
+                    except Exception as exc:
+                        # Jersey extraction failed; log but don't block pipeline
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            f"Jersey OCR failed for track_id={detection.track_id}: {exc}"
+                        )
+                    
                     detection_payload.append(
                         {
                             "class_id": detection.class_id,
@@ -78,6 +97,8 @@ class VideoProcessor:
                             "confidence": detection.confidence,
                             "track_id": detection.track_id,
                             "bbox": detection.bbox.model_dump(),
+                            "jersey_number": jersey_num,
+                            "jersey_confidence": float(jersey_conf),
                         }
                     )
 

@@ -16,6 +16,8 @@ class Detection(BaseModel):
     confidence: float
     bbox: BoundingBox
     track_id: int | None = None
+    jersey_number: int | None = None
+    jersey_confidence: float = 0.0
 
 
 class DetectionFramePayload(BaseModel):

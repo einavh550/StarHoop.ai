@@ -14,3 +14,4 @@ numpy==1.26.4
 pillow==10.4.0
 torch>=2.2.0
 torchvision>=0.17.0
+paddleocr>=2.7.0
