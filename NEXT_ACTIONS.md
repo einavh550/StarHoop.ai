@@ -138,43 +138,56 @@ SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
 
 ---
 
-## 🚀 Next Steps: Milestone 2 Planning
+## 🚀 Next Steps: Milestone 2 Execution
 
 ### Milestone 2 Scope: Perception (YOLOv8 + Tracking)
 
-**Objective**: Implement player detection and tracking from video frames.
+**Objective**: Process uploaded game videos asynchronously, track players, and persist frame-level results.
 
-**Key Deliverables**:
-1. YOLOv8 integration for player detection
-2. DeepSORT/ByteTrack for multi-object tracking
-3. Video upload API endpoint (`POST /api/videos/upload`)
-4. Frame extraction and preprocessing pipeline
-5. Detection confidence threshold tuning
+**Implemented So Far**:
+1. Video upload API endpoint (`POST /api/videos/upload`)
+2. Video job status API endpoint (`GET /api/videos/{job_id}`)
+3. New DB tables: `video_jobs`, `detection_frames`
+4. ByteTrack-first tracker implementation with DeepSORT scaffold
+5. Processing pipeline orchestration and persisted local upload storage
 
-**Estimated Duration**: 2-3 weeks
+**Immediate Validation Commands**:
+```powershell
+# Apply latest schema
+python -m alembic upgrade head
+
+# Run full suite
+python -m pytest -v
+
+# Start API (PowerShell)
+$env:PYTHONPATH = "src"
+python -m uvicorn app.main:app --reload
+```
 
 **New Dependencies**:
 ```txt
-ultralytics>=8.1.0         # YOLOv8
-opencv-python>=4.9.0       # Video processing
+ultralytics==8.3.0         # YOLOv8
+opencv-python==4.10.0.84   # Video processing
 torch>=2.2.0               # Deep learning framework
 torchvision>=0.17.0        # Vision utilities
+python-multipart==0.0.20   # FastAPI multipart upload support
 ```
 
 **New Modules**:
 ```
 src/app/cv/
   ├── detection.py         # YOLOv8 wrapper
-  ├── tracking.py          # DeepSORT/ByteTrack
-  ├── video_processor.py   # Frame extraction
-  └── config.py            # CV-specific settings
+  ├── tracking.py          # ByteTrack + DeepSORT scaffold
+  ├── video_processor.py   # Frame extraction + persistence
+  ├── storage.py           # Persistent upload file handling
+  └── schemas.py           # CV and API payload schemas
 ```
 
-**Recommended Next Session Agenda**:
-1. Review YOLOv8 documentation: https://docs.ultralytics.com/
-2. Design video upload API contract (request/response schema)
-3. Set up GPU support (CUDA) if available
-4. Create Milestone 2 task breakdown and test plan
+**Remaining Milestone 2 Work**:
+1. Install and verify full CV runtime stack on target environments
+2. Improve tracking quality and complete DeepSORT adapter
+3. Add real video smoke tests (non-mocked detector/tracker path)
+4. Add operational metrics (processing duration and per-frame throughput)
 
 ---
 

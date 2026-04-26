@@ -170,15 +170,29 @@ tests/
 ## API Endpoints (Milestone 1)
 
 - `GET /health/` - Health check (returns DB connection status)
+- `POST /api/videos/upload` - Upload video and enqueue async processing job
+- `GET /api/videos/{job_id}` - Get processing status/progress for a job
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
 
+### Upload & Status Examples
+
+```powershell
+# Upload a video for team 1
+curl -X POST "http://localhost:8000/api/videos/upload" \
+  -F "team_id=1" \
+  -F "file=@C:/path/to/game.mp4"
+
+# Check job status (replace 123 with real job_id)
+curl "http://localhost:8000/api/videos/123"
+```
+
 ---
 
-## Next Milestone Preview
+## Milestone 2 Snapshot
 
 **MILESTONE 2**: Perception (YOLOv8 + Tracking)
-- Install: `pip install ultralytics opencv-python`
-- New modules: `src/app/cv/detection.py`, `src/app/cv/tracking.py`
-- API endpoint: `POST /api/videos/upload`
-- Tests: Detection accuracy, tracking consistency
+- Async upload flow with persisted job lifecycle (`video_jobs` table)
+- Frame-level detection persistence (`detection_frames` table)
+- ByteTrack-first implementation + DeepSORT scaffold
+- Test suite expanded to 21 passing tests

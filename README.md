@@ -26,7 +26,7 @@
 ## Development Milestones
 
 - ✅ **MILESTONE 1**: Infrastructure – Modular Python structure, PostgreSQL schema, validation tests  
-- ⏳ **MILESTONE 2**: Perception – YOLOv8 + Tracking  
+- 🔄 **MILESTONE 2**: Perception – YOLOv8 + Tracking (in progress)  
 - ⏳ **MILESTONE 3**: Identity – Jersey OCR + DB mapping  
 - ⏳ **MILESTONE 4**: Action Recognition – 3D CNN spatio-temporal analysis  
 - ⏳ **MILESTONE 5**: Video Engine – Temporal segmentation and clipping  
@@ -140,9 +140,16 @@ StarHoop.ai/
 │   └── app/
 │       ├── api/
 │       │   └── routes/
-│       │       └── health.py         # Health check endpoint
+│       │       ├── health.py         # Health check endpoint
+│       │       └── videos.py         # Video upload and job status endpoints
 │       ├── core/
 │       │   └── config.py            # Settings and environment loading
+│       ├── cv/
+│       │   ├── detection.py         # YOLOv8 detector wrapper
+│       │   ├── tracking.py          # ByteTrack + DeepSORT scaffold
+│       │   ├── video_processor.py   # Processing orchestration
+│       │   ├── storage.py           # Persistent upload storage helpers
+│       │   └── schemas.py           # CV/API schemas
 │       ├── db/
 │       │   ├── base.py              # SQLAlchemy Base
 │       │   ├── session.py           # Engine and SessionLocal
@@ -151,11 +158,14 @@ StarHoop.ai/
 │       │       ├── coach.py         # Coach model
 │       │       ├── team.py          # Team model
 │       │       ├── player.py        # Player model (with jersey number)
-│       │       └── highlight.py     # Highlight model
+│       │       ├── highlight.py     # Highlight model
+│       │       ├── video_job.py     # Async processing jobs
+│       │       └── detection_frame.py # Frame-level detections
 │       └── main.py                  # FastAPI app factory
 ├── alembic/
 │   ├── versions/
-│   │   └── 20260224_000001_init_schema.py   # Initial migration
+│   │   ├── 20260224_000001_init_schema.py   # Initial migration
+│   │   └── 20260307_000002_milestone2_video_jobs.py  # Milestone 2 migration
 │   └── env.py                       # Migration environment
 ├── tests/
 │   ├── unit/
@@ -209,12 +219,31 @@ StarHoop.ai/
 
 ---
 
-## Next Steps (MILESTONE 2)
+## Milestone 2 (Current Implementation)
 
-- Implement YOLOv8 player detection module
-- Add DeepSORT/ByteTrack for multi-object tracking
-- Create video ingestion API endpoint
-- Build detection confidence threshold tuning mechanism
+### Implemented
+
+- Async video ingestion endpoint: `POST /api/videos/upload`
+- Job status endpoint: `GET /api/videos/{job_id}`
+- New persistence tables: `video_jobs`, `detection_frames`
+- ByteTrack-first tracking implementation with DeepSORT scaffold adapter
+- CV processing orchestrator for frame extraction and per-frame persistence
+- Expanded automated tests (unit + integration)
+
+### API Endpoints
+
+- `GET /health/` - Health check
+- `POST /api/videos/upload` - Upload video and start async processing
+- `GET /api/videos/{job_id}` - Fetch processing status and progress
+
+---
+
+## Next Steps (Remaining Milestone 2 Work)
+
+- Install full CV runtime dependencies (`ultralytics`, `opencv-python`, `torch`, `torchvision`) on all target environments
+- Improve tracker quality and complete DeepSORT adapter implementation
+- Add richer progress metrics and processing telemetry
+- Add end-to-end smoke tests with real sample videos
 
 ---
 
