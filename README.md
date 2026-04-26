@@ -1,13 +1,39 @@
 ﻿# StarHoop.ai
 
-StarHoop.ai is an AI pipeline for youth basketball coaches. The current implementation supports Milestone 2 core flow: upload a game video, run player detection/tracking, and persist frame-level results.
+StarHoop.ai is an AI-powered system for youth basketball coaches to automatically generate and share personalized player highlights from amateur smartphone footage using Computer Vision and Deep Learning.
+
+## Project Overview
+
+Target audience: youth basketball coaches (players aged 6-13).
+Goal: automate extraction of personalized player highlights so coaches can provide parents with high-quality clips.
+
+Identification target: jersey number recognition (OCR). Profile photos are for UX only.
+Infrastructure: PostgreSQL (Docker) and Firebase (media storage in later milestones).
+
+## Tech Stack
+
+- Backend: Python, FastAPI, SQLAlchemy, Alembic
+- Computer Vision: YOLOv8 (detection), DeepSORT/ByteTrack (tracking), 3D CNNs (planned)
+- Frontend: Android Studio (Kotlin)
+- Data Management: PostgreSQL (relational), Firebase (blob storage)
+
+## Development Milestones
+
+- Milestone 1: Infrastructure - modular Python structure, PostgreSQL schema, validation tests
+- Milestone 2: Perception - YOLOv8 + tracking
+- Milestone 3: Identity - jersey OCR + DB mapping
+- Milestone 4: Action recognition - spatio-temporal analysis
+- Milestone 5: Video engine - temporal segmentation and clipping
+- Milestone 6: Full integration - Kotlin mobile UI + API connection
 
 ## Current Milestone Status
 
 - Milestone 1: Complete (schema, migrations, base API, tests)
 - Milestone 2: Implemented and validated on real video (upload -> processing -> completed)
-- Milestone 3: Planned (jersey OCR + player mapping)
-- Milestone 4+: Planned
+- Milestone 3: Planned
+- Milestone 4: Planned
+- Milestone 5: Planned
+- Milestone 6: Planned
 
 Important: `track_id` is a tracker identity assigned by ByteTrack. It is not jersey identity.
 
@@ -43,11 +69,22 @@ docker compose exec api alembic upgrade head
 docker compose exec api pytest -v
 ```
 
-## Milestone 2 API
+## Milestone 2 (Current Implementation)
 
+### Implemented
+
+- Async video ingestion endpoint: `POST /api/videos/upload`
+- Job status endpoint: `GET /api/videos/{job_id}`
+- Persistence tables: `video_jobs`, `detection_frames`
+- ByteTrack-first tracking with DeepSORT scaffold
+- CV processing orchestrator for frame extraction and per-frame persistence
+- Processing metrics in status response: `progress_percent`, `processing_duration_sec`, `throughput_fps`
+
+### API Endpoints
+
+- `GET /health/`
 - `POST /api/videos/upload`
 - `GET /api/videos/{job_id}`
-- `GET /health/`
 
 ### Upload a video
 
@@ -104,24 +141,94 @@ docker compose exec db psql -U postgres -d starhoop -c "SELECT COUNT(*) AS detec
 docker compose exec db psql -U postgres -d starhoop -c "SELECT frame_number, timestamp_sec, detections_json FROM detection_frames WHERE video_job_id=<job_id> LIMIT 1;"
 ```
 
-## Local Development (Optional)
+## MILESTONE 1: Setup and Validation (Historical Baseline)
 
-If you are not using Compose for API runtime:
+### 1. Prerequisites
+
+- Python 3.13+ (virtual environment recommended)
+- PostgreSQL running in Docker at localhost:5432 (for local non-compose flow)
+- Git
+
+### 2. PostgreSQL Setup (Docker)
 
 ```powershell
+docker run --name starhoop-postgres -e POSTGRES_PASSWORD=your_password -e POSTGRES_DB=starhoop -p 5432:5432 -d postgres:16-alpine
+```
+
+### 3. Clone and Install Dependencies
+
+```powershell
+git clone <repository-url>
+cd StarHoop.ai
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-$env:PYTHONPATH = "src"
-python -m uvicorn app.main:app --reload
 ```
 
-And run PostgreSQL separately (Docker or local service), then:
+### 4. Configure Environment
+
+```powershell
+cp .env.example .env
+```
+
+Edit `.env` and set DB credentials.
+
+### 5. Run Migrations
 
 ```powershell
 alembic upgrade head
+```
+
+### 6. Run Tests
+
+```powershell
 pytest -v
 ```
+
+### 7. Start API
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+## Project Structure
+
+```text
+StarHoop.ai/
+|- src/
+|  |- app/
+|  |  |- api/routes/health.py
+|  |  |- api/routes/videos.py
+|  |  |- core/config.py
+|  |  |- cv/detection.py
+|  |  |- cv/tracking.py
+|  |  |- cv/video_processor.py
+|  |  |- cv/storage.py
+|  |  |- cv/schemas.py
+|  |  |- db/base.py
+|  |  |- db/session.py
+|  |  |- db/schema.sql
+|  |  |- db/models/*.py
+|  |- main.py
+|- alembic/versions/
+|  |- 20260224_000001_init_schema.py
+|  |- 20260307_000002_milestone2_video_jobs.py
+|- tests/
+|  |- unit/
+|  |- integration/
+|- docker-compose.yml
+|- Dockerfile
+|- requirements.txt
+|- README.md
+```
+
+## Database Schema (Milestone 1 Baseline)
+
+Hierarchy:
+- Coach -> Team -> Player -> Highlight
+
+Milestone 2 additions:
+- VideoJob -> DetectionFrame
 
 ## What Is Implemented vs Deferred
 
@@ -135,6 +242,12 @@ Implemented now:
 Deferred to Milestone 3+:
 - Jersey OCR and mapping to `players.jersey_number`
 - Action recognition and highlight generation
+
+## Next Steps (Remaining Milestone 2 Work)
+
+- Improve tracker quality for hard occlusions
+- Implement DeepSORT adapter fully or keep ByteTrack-only strategy explicitly
+- Add richer operational metrics if needed
 
 ## Repository Notes
 
@@ -157,6 +270,10 @@ docker compose logs -f api
 docker compose exec api alembic current
 docker compose exec api alembic upgrade head
 ```
+
+## Contributing
+
+This is a Computer Science final project. Contributions are welcome after milestone validation milestones are coordinated.
 
 ## License
 
