@@ -71,3 +71,24 @@ class PlayerMappingResponse(BaseModel):
     low_confidence_count: int
     no_match_count: int
     mappings: list[PlayerMappingSuggestion] = Field(default_factory=list)
+
+
+class ActionDetectionSuggestion(BaseModel):
+    track_id: int | None = None
+    action_type: str
+    action_confidence: float
+    start_frame: int
+    end_frame: int
+    start_timestamp_sec: float
+    end_timestamp_sec: float
+    mapped_player_id: int | None = None
+
+
+class ActionDetectionResponse(BaseModel):
+    job_id: int
+    team_id: int
+    total_actions: int
+    high_confidence_count: int
+    medium_confidence_count: int
+    low_confidence_count: int
+    actions: list[ActionDetectionSuggestion] = Field(default_factory=list)

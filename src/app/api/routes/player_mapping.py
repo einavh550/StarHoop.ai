@@ -10,10 +10,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.cv.mapping import PlayerMapper
 from app.cv.schemas import PlayerMappingResponse, PlayerMappingSuggestion
+from app.cv.video_processor import reprocess_jersey_detections_from_video
 from app.db.models import VideoJob
+from app.db.session import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/videos", tags=["player_mapping"])
 async def auto_map_players(
     job_id: int,
     team_id: Annotated[int, Query(..., description="Team ID for player lookup")],
+    recompute_from_frames: bool = False,
     db: Session = Depends(get_db),
 ) -> PlayerMappingResponse:
     """
@@ -56,6 +58,9 @@ async def auto_map_players(
                 detail=f"VideoJob {job_id} belongs to team {job.team_id}, not {team_id}"
             )
         
+        if recompute_from_frames:
+            reprocess_jersey_detections_from_video(db=db, job=job)
+
         # Aggregate jerseys
         aggregated = PlayerMapper.aggregate_jerseys_from_video(db, job_id, team_id)
         

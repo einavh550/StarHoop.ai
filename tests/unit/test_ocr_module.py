@@ -4,6 +4,7 @@ Unit tests for jersey OCR recognition module.
 
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from app.cv.ocr import JerseyRecognizer
 
@@ -130,6 +131,36 @@ class TestJerseyRecognizerEdgeCases:
         result = recognizer.extract_jersey_from_bbox(noise_crop)
         assert isinstance(result, tuple)
         assert len(result) == 2
+
+    def test_extract_low_confidence_numeric_candidate_when_enabled(self):
+        recognizer = JerseyRecognizer(confidence_threshold=0.9)
+        recognizer._ocr_model = SimpleNamespace(
+            ocr=lambda image, cls=False: [[(
+                None,
+                ("23", 0.42),
+            )]],
+        )
+
+        crop = np.ones((50, 50, 3), dtype=np.uint8) * 255
+        jersey_num, confidence = recognizer.extract_jersey_from_bbox(crop, allow_low_confidence=True)
+
+        assert jersey_num == 23
+        assert confidence == 0.42
+
+    def test_extract_low_confidence_numeric_candidate_when_disabled(self):
+        recognizer = JerseyRecognizer(confidence_threshold=0.9)
+        recognizer._ocr_model = SimpleNamespace(
+            ocr=lambda image, cls=False: [[(
+                None,
+                ("23", 0.42),
+            )]],
+        )
+
+        crop = np.ones((50, 50, 3), dtype=np.uint8) * 255
+        jersey_num, confidence = recognizer.extract_jersey_from_bbox(crop, allow_low_confidence=False)
+
+        assert jersey_num is None
+        assert confidence == 0.42
 
 
 class TestJerseyRecognizerIntegration:

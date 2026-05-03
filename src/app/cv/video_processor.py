@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,9 @@ from app.cv.tracking import build_tracker
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.video_job import VideoJob
 from app.db.session import SessionLocal
+
+
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -32,7 +36,7 @@ class VideoProcessor:
     def __init__(self, detector: YOLODetector, target_fps: int, jersey_recognizer: JerseyRecognizer | None = None) -> None:
         self.detector = detector
         self.target_fps = max(target_fps, 1)
-        self.jersey_recognizer = jersey_recognizer or JerseyRecognizer(confidence_threshold=0.7)
+        self.jersey_recognizer = jersey_recognizer or JerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
 
     def process_job(self, db: Session, job: VideoJob) -> None:
         cv2 = _import_cv2_module()
@@ -52,6 +56,10 @@ class VideoProcessor:
 
         frame_index = 0
         processed_frames = 0
+        ocr_attempts = 0
+        ocr_hits = 0
+        ocr_rejections = 0
+        ocr_failures = 0
 
         try:
             while True:
@@ -76,18 +84,51 @@ class VideoProcessor:
                     # Extract jersey number from the bounding box crop
                     jersey_num = None
                     jersey_conf = 0.0
+                    ocr_attempts += 1
                     try:
                         bbox_crop = self.jersey_recognizer.preprocess_bbox_crop(
                             frame=frame,
                             bbox=detection.bbox.model_dump(),
                             pad_percent=0.05
                         )
-                        jersey_num, jersey_conf = self.jersey_recognizer.extract_jersey_from_bbox(bbox_crop)
+                        crop_h, crop_w = bbox_crop.shape[:2]
+                        jersey_num, jersey_conf = self.jersey_recognizer.extract_jersey_from_bbox(
+                            bbox_crop,
+                            allow_low_confidence=settings.ocr_persist_low_confidence,
+                        )
+                        if jersey_num is not None:
+                            ocr_hits += 1
+                            logger.info(
+                                "ocr_hit job_id=%s track_id=%s jersey=%s conf=%.3f crop=%sx%s frame=%s",
+                                job.id,
+                                detection.track_id,
+                                jersey_num,
+                                jersey_conf,
+                                crop_w,
+                                crop_h,
+                                frame_index,
+                            )
+                        else:
+                            ocr_rejections += 1
+                            logger.info(
+                                "ocr_reject job_id=%s track_id=%s conf=%.3f threshold=%.3f crop=%sx%s frame=%s",
+                                job.id,
+                                detection.track_id,
+                                jersey_conf,
+                                self.jersey_recognizer.confidence_threshold,
+                                crop_w,
+                                crop_h,
+                                frame_index,
+                            )
                     except Exception as exc:
                         # Jersey extraction failed; log but don't block pipeline
-                        import logging
-                        logging.getLogger(__name__).warning(
-                            f"Jersey OCR failed for track_id={detection.track_id}: {exc}"
+                        ocr_failures += 1
+                        logger.warning(
+                            "ocr_failure job_id=%s track_id=%s frame=%s error=%s",
+                            job.id,
+                            detection.track_id,
+                            frame_index,
+                            exc,
                         )
                     
                     detection_payload.append(
@@ -121,8 +162,82 @@ class VideoProcessor:
                 frame_index += 1
 
             db.commit()
+            logger.info(
+                "ocr_summary job_id=%s attempts=%s hits=%s rejections=%s failures=%s hit_rate=%.3f",
+                job.id,
+                ocr_attempts,
+                ocr_hits,
+                ocr_rejections,
+                ocr_failures,
+                (ocr_hits / ocr_attempts) if ocr_attempts else 0.0,
+            )
         finally:
             capture.release()
+
+
+def reprocess_jersey_detections_from_video(db: Session, job: VideoJob) -> dict[str, int]:
+    cv2 = _import_cv2_module()
+    recognizer = JerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
+
+    frames = (
+        db.query(DetectionFrame)
+        .filter(DetectionFrame.video_job_id == job.id)
+        .order_by(DetectionFrame.frame_number.asc())
+        .all()
+    )
+    if not frames:
+        return {"frames": 0, "updated": 0, "hits": 0, "rejections": 0, "failures": 0}
+
+    capture = cv2.VideoCapture(job.storage_path)
+    if not capture.isOpened():
+        raise ValueError(f"Could not open video file: {job.storage_path}")
+
+    updated = 0
+    hits = 0
+    rejections = 0
+    failures = 0
+    try:
+        for frame_row in frames:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame_row.frame_number))
+            success, frame = capture.read()
+            if not success:
+                failures += 1
+                continue
+
+            changed = False
+            detections_json = frame_row.detections_json or []
+            for detection in detections_json:
+                if detection.get("class_name") != "person" or detection.get("track_id") is None:
+                    continue
+
+                if detection.get("jersey_number") is not None and detection.get("jersey_confidence", 0.0) >= settings.ocr_confidence_threshold:
+                    continue
+
+                try:
+                    bbox_crop = recognizer.preprocess_bbox_crop(frame=frame, bbox=detection["bbox"], pad_percent=0.05)
+                    jersey_num, jersey_conf = recognizer.extract_jersey_from_bbox(
+                        bbox_crop,
+                        allow_low_confidence=settings.ocr_persist_low_confidence,
+                    )
+                    detection["jersey_number"] = jersey_num
+                    detection["jersey_confidence"] = float(jersey_conf)
+                    changed = True
+                    if jersey_num is not None:
+                        hits += 1
+                    else:
+                        rejections += 1
+                except Exception:
+                    failures += 1
+                    continue
+
+            if changed:
+                frame_row.detections_json = detections_json
+                updated += 1
+
+        db.commit()
+        return {"frames": len(frames), "updated": updated, "hits": hits, "rejections": rejections, "failures": failures}
+    finally:
+        capture.release()
 
 
 def process_video_job(video_job_id: int) -> None:

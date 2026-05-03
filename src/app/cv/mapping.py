@@ -73,6 +73,7 @@ class PlayerMapper:
         jersey_aggregates = defaultdict(lambda: {
             'confidences': [],
             'jersey_numbers': [],
+            'weighted_votes': defaultdict(float),
         })
         
         for frame in detection_frames:
@@ -86,6 +87,10 @@ class PlayerMapper:
                 if track_id is not None and jersey_num is not None:
                     jersey_aggregates[track_id]['confidences'].append(jersey_conf)
                     jersey_aggregates[track_id]['jersey_numbers'].append(jersey_num)
+                    vote_weight = max(0.15, min(1.0, float(jersey_conf)))
+                    if jersey_conf < 0.5:
+                        vote_weight *= 0.5
+                    jersey_aggregates[track_id]['weighted_votes'][jersey_num] += vote_weight
         
         if not jersey_aggregates:
             logger.warning(f"No jersey detections found for job {video_job_id}")
@@ -98,9 +103,10 @@ class PlayerMapper:
         for track_id, stats in jersey_aggregates.items():
             confidences = stats['confidences']
             jersey_numbers = stats['jersey_numbers']
+            weighted_votes = stats['weighted_votes']
             
-            # Most common jersey for this track
-            detected_jersey = max(set(jersey_numbers), key=jersey_numbers.count)
+            # Pick the jersey with the strongest confidence-weighted support.
+            detected_jersey = max(weighted_votes.items(), key=lambda item: (item[1], jersey_numbers.count(item[0])))[0]
             
             # Confidence metrics
             confidence_mean = mean(confidences)

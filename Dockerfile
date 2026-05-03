@@ -24,6 +24,7 @@ RUN pip install --upgrade pip \
     && pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 COPY src ./src
+COPY tests ./tests
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY pytest.ini ./

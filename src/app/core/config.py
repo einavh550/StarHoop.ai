@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     cv_min_player_height_px: int = 50
     cv_tracker: str = "bytetrack"
     cv_target_fps: int = 30
+    ocr_confidence_threshold: float = 0.5
+    ocr_persist_low_confidence: bool = False
+    ocr_debug_crop_dump_dir: str = "uploads/ocr_debug"
+    ocr_min_crop_size_px: int = 12
+    ocr_resize_height_px: int = 64
 
     max_upload_size_mb: int = 500
     video_storage_dir: str = "uploads/videos"

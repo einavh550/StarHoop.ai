@@ -65,6 +65,28 @@ class TestPlayerMappingLogic:
         
         result = PlayerMapper.aggregate_jerseys_from_video(mock_db, 1, 10)
         assert result == {}
+
+    def test_aggregation_prefers_confidence_weighted_jersey(self):
+        mock_db = Mock()
+        mock_job = Mock(team_id=10)
+        mock_player = Player(id=1, team_id=10, jersey_number=23, full_name="Test Player")
+
+        mock_frame = Mock()
+        mock_frame.detections_json = [
+            {'track_id': 7, 'class_id': 0, 'jersey_number': 23, 'jersey_confidence': 0.92},
+            {'track_id': 7, 'class_id': 0, 'jersey_number': 24, 'jersey_confidence': 0.18},
+        ]
+
+        mock_db.query.side_effect = [
+            Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_job)))),
+            Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[mock_frame])))),
+            Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[mock_player])))),
+        ]
+
+        result = PlayerMapper.aggregate_jerseys_from_video(mock_db, 1, 10)
+
+        assert 7 in result
+        assert result[7]['detected_jersey'] == 23
     
     def test_aggregation_detections_without_jersey(self):
         """Test aggregation skips detections without jersey data."""
@@ -101,9 +123,10 @@ class TestPlayerMappingLogic:
             Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[mock_frame])))),
         ]
         
-        with pytest.raises((AttributeError, TypeError)):
-            # Mock setup is complex; this test validates the data structure
-            pass
+        result = PlayerMapper.aggregate_jerseys_from_video(mock_db, 1, 10)
+        assert 5 in result
+        assert result[5]['detected_jersey'] == 23
+        assert result[5]['suggested_player'] is not None
 
 
 class TestMatchRating:
@@ -112,7 +135,7 @@ class TestMatchRating:
     @pytest.mark.parametrize("confidence,frame_count,expected_rating", [
         (0.9, 10, 'high'),
         (0.8, 5, 'high'),
-        (0.85, 1, 'medium'),
+        (0.85, 1, 'low'),
         (0.75, 10, 'medium'),
         (0.7, 2, 'medium'),
         (0.65, 5, 'low'),

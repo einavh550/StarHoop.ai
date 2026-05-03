@@ -1,10 +1,12 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.cv.schemas import VideoJobStatusResponse, VideoUploadResponse
 from app.cv.storage import parse_allowed_extensions, save_upload_file
 from app.cv.video_processor import process_video_job
+from app.db.models.detection_frame import DetectionFrame
 from app.db.models.team import Team
 from app.db.models.video_job import VideoJob
 from app.db.session import get_db
@@ -101,3 +103,74 @@ def get_video_job_status(job_id: int, db: Session = Depends(get_db)) -> VideoJob
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+@router.get("/{job_id}/ocr/debug/crop")
+def debug_ocr_crop(
+    job_id: int,
+    frame_number: int,
+    track_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    job = db.get(VideoJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with id={job_id} was not found.")
+
+    frame_row = (
+        db.query(DetectionFrame)
+        .filter(DetectionFrame.video_job_id == job_id, DetectionFrame.frame_number == frame_number)
+        .first()
+    )
+    if frame_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Frame not found for job.")
+
+    detection = None
+    for item in frame_row.detections_json or []:
+        if item.get("track_id") == track_id:
+            detection = item
+            break
+
+    if detection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Track not found in frame.")
+
+    bbox = detection.get("bbox") or {}
+    if not bbox:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Detection bbox missing.")
+
+    try:
+        import cv2  # pyright: ignore[reportMissingImports]
+
+        capture = cv2.VideoCapture(job.storage_path)
+        if not capture.isOpened():
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not open video file.")
+
+        try:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            success, frame = capture.read()
+            if not success:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Could not read requested frame.")
+
+            x1, y1, x2, y2 = int(bbox["x1"]), int(bbox["y1"]), int(bbox["x2"]), int(bbox["y2"])
+            pad_x = int((x2 - x1) * 0.05)
+            pad_y = int((y2 - y1) * 0.05)
+            h, w = frame.shape[:2]
+            x1 = max(0, x1 - pad_x)
+            y1 = max(0, y1 - pad_y)
+            x2 = min(w, x2 + pad_x)
+            y2 = min(h, y2 + pad_y)
+            crop = frame[y1:y2, x1:x2]
+
+            if crop.size == 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Crop was empty.")
+
+            success, encoded = cv2.imencode(".png", crop)
+            if not success:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not encode crop.")
+
+            return Response(content=encoded.tobytes(), media_type="image/png")
+        finally:
+            capture.release()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Debug crop failed: {exc}") from exc
