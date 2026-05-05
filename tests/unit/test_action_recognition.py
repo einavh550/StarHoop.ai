@@ -1,4 +1,4 @@
-from app.cv.actions import ActionCandidate, ActionRecognizer, TrackObservation
+from import ActionCandidate, ActionRecognizer, TrackObservation
 
 
 def test_detect_shot_attempt_positive_case() -> None:
