@@ -84,6 +84,8 @@ class VideoProcessor:
                     # Extract jersey number from the bounding box crop
                     jersey_num = None
                     jersey_conf = 0.0
+                    jersey_ocr_status = "not_attempted"
+                    jersey_ocr_reason = "not_attempted"
                     ocr_attempts += 1
                     try:
                         bbox_crop = self.jersey_recognizer.preprocess_bbox_crop(
@@ -96,7 +98,9 @@ class VideoProcessor:
                             bbox_crop,
                             allow_low_confidence=settings.ocr_persist_low_confidence,
                         )
+                        jersey_ocr_reason = self.jersey_recognizer.last_ocr_reason
                         if jersey_num is not None:
+                            jersey_ocr_status = "hit"
                             ocr_hits += 1
                             logger.info(
                                 "ocr_hit job_id=%s track_id=%s jersey=%s conf=%.3f crop=%sx%s frame=%s",
@@ -109,6 +113,7 @@ class VideoProcessor:
                                 frame_index,
                             )
                         else:
+                            jersey_ocr_status = "miss"
                             ocr_rejections += 1
                             logger.info(
                                 "ocr_reject job_id=%s track_id=%s conf=%.3f threshold=%.3f crop=%sx%s frame=%s",
@@ -122,6 +127,8 @@ class VideoProcessor:
                             )
                     except Exception as exc:
                         # Jersey extraction failed; log but don't block pipeline
+                        jersey_ocr_status = "failure"
+                        jersey_ocr_reason = f"exception:{exc.__class__.__name__}"
                         ocr_failures += 1
                         logger.warning(
                             "ocr_failure job_id=%s track_id=%s frame=%s error=%s",
@@ -140,6 +147,8 @@ class VideoProcessor:
                             "bbox": detection.bbox.model_dump(),
                             "jersey_number": jersey_num,
                             "jersey_confidence": float(jersey_conf),
+                            "jersey_ocr_status": jersey_ocr_status,
+                            "jersey_ocr_reason": jersey_ocr_reason,
                         }
                     )
 
@@ -221,6 +230,8 @@ def reprocess_jersey_detections_from_video(db: Session, job: VideoJob) -> dict[s
                     )
                     detection["jersey_number"] = jersey_num
                     detection["jersey_confidence"] = float(jersey_conf)
+                    detection["jersey_ocr_status"] = "hit" if jersey_num is not None else "miss"
+                    detection["jersey_ocr_reason"] = recognizer.last_ocr_reason
                     changed = True
                     if jersey_num is not None:
                         hits += 1

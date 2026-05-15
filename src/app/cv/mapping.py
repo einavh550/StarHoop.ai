@@ -2,17 +2,39 @@
 Player mapping service for associating detected jerseys to Player records.
 
 Aggregates jersey detections from detection_frames and matches to team players.
+Uses outlier-resistant aggregation and provides detailed diagnostics.
 """
 
 import logging
 from collections import defaultdict
-from statistics import mean
+from dataclasses import dataclass
+from statistics import mean, median, stdev
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import DetectionFrame, JerseyDetection, Player, VideoJob
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class JerseyMatchDiagnostic:
+    """Per-track match quality diagnostic for debugging."""
+    track_id: int
+    detected_jersey: int
+    frame_count: int
+    confidence_values: list[float]
+    confidence_mean: float
+    confidence_median: float
+    confidence_std: float
+    detected_jerseys_distinct: int
+    detected_jerseys_list: list[int]
+    suggested_player_id: Optional[int]
+    suggested_player_name: Optional[str]
+    match_rating: str
+    match_reason: str
 
 
 class PlayerMapper:
@@ -32,7 +54,8 @@ class PlayerMapper:
         """
         Aggregate jersey detections from all detection_frames for a video job.
         
-        Groups by track_id, computes confidence statistics, and suggests player matches.
+        Groups by track_id, computes confidence statistics using outlier-resistant methods,
+        and suggests player matches. Provides detailed diagnostics per track.
         
         Args:
             db: Database session
@@ -44,9 +67,12 @@ class PlayerMapper:
                 'detected_jersey': int,
                 'frame_count': int,
                 'confidence_mean': float,
+                'confidence_median': float,
+                'confidence_std': float,
                 'confidence_max': float,
                 'suggested_player': Player or None,
-                'match_rating': str ('high', 'medium', 'low', 'no_match')
+                'match_rating': str ('high', 'medium', 'low', 'no_match'),
+                'diagnostic': JerseyMatchDiagnostic
             }
         
         Raises:
@@ -69,11 +95,11 @@ class PlayerMapper:
             logger.warning(f"No detection frames found for job {video_job_id}")
             return {}
         
-        # Aggregate jerseys by track_id
+        # Aggregate jerseys by track_id with separate high-confidence tracking
         jersey_aggregates = defaultdict(lambda: {
             'confidences': [],
             'jersey_numbers': [],
-            'weighted_votes': defaultdict(float),
+            'high_confidence_votes': [],
         })
         
         for frame in detection_frames:
@@ -87,10 +113,9 @@ class PlayerMapper:
                 if track_id is not None and jersey_num is not None:
                     jersey_aggregates[track_id]['confidences'].append(jersey_conf)
                     jersey_aggregates[track_id]['jersey_numbers'].append(jersey_num)
-                    vote_weight = max(0.15, min(1.0, float(jersey_conf)))
-                    if jersey_conf < 0.5:
-                        vote_weight *= 0.5
-                    jersey_aggregates[track_id]['weighted_votes'][jersey_num] += vote_weight
+                    # Track high-confidence detections separately for consensus voting
+                    if jersey_conf >= settings.ocr_confidence_strict:
+                        jersey_aggregates[track_id]['high_confidence_votes'].append(jersey_num)
         
         if not jersey_aggregates:
             logger.warning(f"No jersey detections found for job {video_job_id}")
@@ -103,36 +128,168 @@ class PlayerMapper:
         for track_id, stats in jersey_aggregates.items():
             confidences = stats['confidences']
             jersey_numbers = stats['jersey_numbers']
-            weighted_votes = stats['weighted_votes']
+            high_conf_jerseys = stats['high_confidence_votes']
+            frame_count = len(confidences)
             
-            # Pick the jersey with the strongest confidence-weighted support.
-            detected_jersey = max(weighted_votes.items(), key=lambda item: (item[1], jersey_numbers.count(item[0])))[0]
-            
-            # Confidence metrics
+            # Statistical analysis
             confidence_mean = mean(confidences)
             confidence_max = max(confidences)
-            frame_count = len(confidences)
+            confidence_median = median(confidences) if confidences else 0.0
+            confidence_std = 0.0
+            if len(confidences) > 1:
+                try:
+                    confidence_std = stdev(confidences)
+                except Exception:
+                    confidence_std = 0.0
+            
+            # Jersey selection: prefer high-confidence consensus if available
+            if high_conf_jerseys:
+                detected_jersey = max(set(high_conf_jerseys), key=high_conf_jerseys.count)
+                selection_reason = "high_confidence_consensus"
+            else:
+                # Use outlier-resistant voting on all confidences
+                detected_jersey = PlayerMapper._select_jersey_outlier_resistant(
+                    jersey_numbers,
+                    confidences,
+                    confidence_median,
+                )
+                selection_reason = "outlier_resistant_voting"
             
             # Find player match
             suggested_player = players_by_jersey.get(detected_jersey)
             
-            # Rate match quality
-            if suggested_player:
-                match_rating = PlayerMapper._rate_match(confidence_mean, frame_count)
-            else:
-                match_rating = 'no_match'
+            # Rate match quality with detailed reasoning
+            match_rating, match_reason = PlayerMapper._rate_match_with_reason(
+                confidence_mean=confidence_mean,
+                confidence_median=confidence_median,
+                confidence_std=confidence_std,
+                frame_count=frame_count,
+                player_exists=suggested_player is not None,
+                selection_reason=selection_reason,
+            )
+            
+            # Build diagnostic for troubleshooting
+            diagnostic = JerseyMatchDiagnostic(
+                track_id=int(track_id),
+                detected_jersey=detected_jersey,
+                frame_count=frame_count,
+                confidence_values=sorted(confidences, reverse=True),
+                confidence_mean=float(confidence_mean),
+                confidence_median=float(confidence_median),
+                confidence_std=float(confidence_std),
+                detected_jerseys_distinct=len(set(jersey_numbers)),
+                detected_jerseys_list=sorted(set(jersey_numbers)),
+                suggested_player_id=suggested_player.id if suggested_player else None,
+                suggested_player_name=suggested_player.full_name if suggested_player else None,
+                match_rating=match_rating,
+                match_reason=match_reason,
+            )
             
             result[track_id] = {
                 'detected_jersey': detected_jersey,
                 'frame_count': frame_count,
                 'confidence_mean': float(confidence_mean),
+                'confidence_median': float(confidence_median),
+                'confidence_std': float(confidence_std),
                 'confidence_max': float(confidence_max),
                 'suggested_player': suggested_player,
                 'match_rating': match_rating,
+                'diagnostic': diagnostic,
             }
+            
+            logger.info(
+                f"track_id={track_id} jersey={detected_jersey} frames={frame_count} "
+                f"conf_mean={confidence_mean:.3f} conf_std={confidence_std:.3f} "
+                f"player={suggested_player.full_name if suggested_player else 'NONE'} "
+                f"rating={match_rating} reason={match_reason}"
+            )
         
         return result
     
+    @staticmethod
+    def _select_jersey_outlier_resistant(
+        jersey_numbers: list[int],
+        confidences: list[float],
+        confidence_median: float,
+    ) -> int:
+        """
+        Select the best jersey using outlier-resistant weighted voting.
+        
+        Gives higher weight to detections near the median confidence level,
+        depressing the influence of extreme outliers (very high or very low confidence).
+        
+        Args:
+            jersey_numbers: List of detected jersey numbers
+            confidences: Corresponding confidence scores
+            confidence_median: Median confidence value
+        
+        Returns:
+            Selected jersey number
+        """
+        if not jersey_numbers:
+            return 0
+        
+        # Compute weights: detections close to median get weight 1.0,
+        # detections far from median (outliers) get reduced weight
+        weights = {}
+        for jersey, conf in zip(jersey_numbers, confidences):
+            diff_from_median = abs(conf - confidence_median)
+            # Outliers (>0.6 away from median) get 50% weight
+            weight = 0.5 if diff_from_median > settings.jersey_aggregation_outlier_threshold else 1.0
+            weights[jersey] = weights.get(jersey, 0) + weight
+        
+        # Pick jersey with strongest weighted support, breaking ties by frequency
+        detected_jersey = max(weights.items(), key=lambda item: (item[1], jersey_numbers.count(item[0])))[0]
+        return detected_jersey
+    
+    @staticmethod
+    def _rate_match_with_reason(
+        confidence_mean: float,
+        confidence_median: float,
+        confidence_std: float,
+        frame_count: int,
+        player_exists: bool,
+        selection_reason: str,
+    ) -> tuple[str, str]:
+        """
+        Rate match quality and provide detailed reasoning for the rating.
+        
+        Uses mean, median, and std dev for nuanced quality assessment.
+        Higher consistency (low std dev) and persistence (high frame count)
+        indicate better matches.
+        
+        Args:
+            confidence_mean: Average OCR confidence
+            confidence_median: Median OCR confidence
+            confidence_std: Standard deviation of confidences
+            frame_count: Number of frames detecting this jersey
+            player_exists: Whether jersey found in roster
+            selection_reason: How jersey was selected (for logging)
+        
+        Returns:
+            (rating, reason) tuple where rating is 'high'|'medium'|'low'|'no_match'
+        """
+        if not player_exists:
+            return 'no_match', 'jersey_not_in_roster'
+        
+        # High rating: consistent, high-confidence, persistent detections
+        if confidence_mean >= 0.8 and frame_count >= 5 and confidence_std < 0.15:
+            return 'high', 'high_consistency_and_persistence'
+        
+        # Medium rating: good mean confidence and reasonable persistence
+        if confidence_mean >= 0.7 and frame_count >= 3:
+            return 'medium', 'good_confidence_and_persistence'
+        
+        # Medium rating: strong median confidence even if mean is lower (outliers present)
+        if confidence_median >= 0.75 and frame_count >= 3:
+            return 'medium', 'high_median_confidence'
+        
+        # Low rating: minimum acceptable quality for matching
+        if confidence_mean >= 0.6 or frame_count >= 4:
+            return 'low', 'marginal_quality_confidence_or_persistence'
+        
+        return 'low', 'insufficient_confidence_or_frame_count'
+
     @staticmethod
     def persist_jersey_detections(
         db: Session,
@@ -187,7 +344,7 @@ class PlayerMapper:
     @staticmethod
     def _rate_match(confidence_mean: float, frame_count: int) -> str:
         """
-        Rate match quality based on confidence and persistence.
+        Rate match quality based on confidence and persistence (backward compatible).
         
         Args:
             confidence_mean: Average OCR confidence (0.0-1.0)
@@ -196,14 +353,15 @@ class PlayerMapper:
         Returns:
             'high', 'medium', 'low', or 'no_match'
         """
-        if confidence_mean >= 0.8 and frame_count >= 5:
-            return 'high'
-        elif confidence_mean >= 0.7 and frame_count >= 2:
-            return 'medium'
-        elif confidence_mean >= 0.6 or frame_count >= 3:
-            return 'low'
-        else:
-            return 'no_match'
+        rating, _ = PlayerMapper._rate_match_with_reason(
+            confidence_mean=confidence_mean,
+            confidence_median=confidence_mean,
+            confidence_std=0.0,
+            frame_count=frame_count,
+            player_exists=True,
+            selection_reason='legacy_compatibility',
+        )
+        return rating
 
 
 def extract_and_map_player_jerseys(

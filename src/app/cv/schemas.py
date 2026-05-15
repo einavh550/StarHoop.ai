@@ -73,6 +73,21 @@ class PlayerMappingResponse(BaseModel):
     mappings: list[PlayerMappingSuggestion] = Field(default_factory=list)
 
 
+class AnnotatedVideoExportResponse(BaseModel):
+    job_id: int
+    export_id: str
+    status: str
+    output_filename: str
+    download_url: str
+    created_at: str
+    total_frames: int | None = None
+    rendered_frames: int = 0
+
+
+class AnnotatedVideoExportStatusResponse(AnnotatedVideoExportResponse):
+    file_size_bytes: int | None = None
+
+
 class ActionDetectionSuggestion(BaseModel):
     track_id: int | None = None
     action_type: str

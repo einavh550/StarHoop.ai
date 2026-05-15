@@ -162,6 +162,30 @@ class TestJerseyRecognizerEdgeCases:
         assert jersey_num is None
         assert confidence == 0.42
 
+    def test_extract_retries_variants_until_numeric_candidate_is_found(self):
+        class SequencedOCR:
+            def __init__(self):
+                self.calls = 0
+
+            def ocr(self, image, cls=False):
+                self.calls += 1
+                if self.calls == 1:
+                    return []
+                return [[(
+                    None,
+                    ("23", 0.91),
+                )]]
+
+        recognizer = JerseyRecognizer(confidence_threshold=0.8)
+        recognizer._ocr_model = SequencedOCR()
+
+        crop = np.ones((50, 50, 3), dtype=np.uint8) * 255
+        jersey_num, confidence = recognizer.extract_jersey_from_bbox(crop)
+
+        assert jersey_num == 23
+        assert confidence == 0.91
+        assert recognizer.last_ocr_reason.startswith("accepted:")
+
 
 class TestJerseyRecognizerIntegration:
     """Integration tests with mocked OCR behavior."""
