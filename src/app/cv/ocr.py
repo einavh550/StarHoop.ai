@@ -127,16 +127,40 @@ class JerseyRecognizer:
             ("adaptive", cv2.cvtColor(adaptive, cv2.COLOR_GRAY2BGR)),
         ]
 
+
     @staticmethod
     def _parse_ocr_results(results) -> list[tuple[str, float]]:
+        """Parse PaddleOCR results. Handles both old and new result formats."""
         text_blocks: list[tuple[str, float]] = []
-        for line in results or []:
-            for text_tuple in line or []:
-                _, (text, ocr_confidence) = text_tuple
-                text_blocks.append((text.strip(), float(ocr_confidence)))
+
+        for result_item in results or []:
+            # New PaddleOCR format: dictionary with rec_texts and rec_scores
+            if isinstance(result_item, dict):
+                rec_texts = result_item.get("rec_texts", [])
+                rec_scores = result_item.get("rec_scores", [])
+                if rec_texts and rec_scores:
+                    for text, score in zip(rec_texts, rec_scores):
+                        if text and score is not None:
+                            text_blocks.append((str(text).strip(), float(score)))
+            # Old PaddleOCR format: nested list structure
+            elif isinstance(result_item, (list, tuple)):
+                for item in result_item or []:
+                    text = None
+                    ocr_confidence = None
+                    if isinstance(item, (list, tuple)):
+                        if len(item) >= 3 and isinstance(item[1], str):
+                            text = item[1]
+                            ocr_confidence = item[2]
+                        elif len(item) >= 2 and isinstance(item[1], (list, tuple)) and len(item[1]) >= 2:
+                            text = item[1][0]
+                            ocr_confidence = item[1][1]
+                    if text is not None and ocr_confidence is not None:
+                        text_blocks.append((str(text).strip(), float(ocr_confidence)))
 
         text_blocks.sort(key=lambda item: item[1], reverse=True)
         return text_blocks
+
+
 
     def extract_jersey_from_bbox(
         self,
@@ -159,8 +183,12 @@ class JerseyRecognizer:
             best_candidate_reason = "no_valid_digits"
 
             for variant_name, variant in self._build_ocr_variants(image_crop):
-                results = self.ocr_model.ocr(variant, cls=False)
-                text_blocks = self._parse_ocr_results(results)
+                try:
+                    results = self.ocr_model.ocr(variant)
+                    text_blocks = self._parse_ocr_results(results)
+                except Exception as ocr_variant_error:
+                    logger.warning("OCR variant '%s' failed: %s", variant_name, ocr_variant_error)
+                    continue
 
                 if not text_blocks:
                     logger.debug("OCR variant '%s' returned no text blocks", variant_name)
