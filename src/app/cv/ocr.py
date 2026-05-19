@@ -6,7 +6,11 @@ Provides confidence scores and handles edge cases (non-numeric results, low conf
 """
 
 import logging
+import multiprocessing
+import queue
 import re
+import threading
+import time
 from typing import Optional
 
 import cv2
@@ -15,6 +19,147 @@ import numpy as np
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_OCR_WORKER_TIMEOUT_SEC = 3.0
+_OCR_WORKER_COOLDOWN_SEC = 60.0
+
+
+def _ocr_worker(request_queue, response_queue, confidence_threshold: float) -> None:
+    recognizer = JerseyRecognizer(confidence_threshold=confidence_threshold)
+    while True:
+        message = request_queue.get()
+        if message is None:
+            return
+
+        request_id, image_crop, allow_low_confidence = message
+        try:
+            jersey_num, jersey_conf = recognizer.extract_jersey_from_bbox(
+                image_crop,
+                allow_low_confidence=allow_low_confidence,
+            )
+            response_queue.put(
+                (request_id, jersey_num, jersey_conf, recognizer.last_ocr_reason, None)
+            )
+        except Exception as exc:
+            response_queue.put(
+                (request_id, None, 0.0, recognizer.last_ocr_reason, f"{exc.__class__.__name__}")
+            )
+
+
+class _OcrWorkerManager:
+    def __init__(self, confidence_threshold: float) -> None:
+        self._confidence_threshold = confidence_threshold
+        self._context = multiprocessing.get_context("spawn")
+        self._request_queue = None
+        self._response_queue = None
+        self._process = None
+        self._lock = threading.Lock()
+        self._next_request_id = 0
+        self._failure_count = 0
+        self._disabled_until = 0.0
+
+    def _start_worker(self) -> None:
+        self._request_queue = self._context.Queue(maxsize=10)
+        self._response_queue = self._context.Queue(maxsize=10)
+        self._process = self._context.Process(
+            target=_ocr_worker,
+            args=(self._request_queue, self._response_queue, self._confidence_threshold),
+            daemon=True,
+        )
+        self._process.start()
+        logger.info("Started OCR worker process pid=%s", self._process.pid)
+
+    def _ensure_worker(self) -> bool:
+        if time.monotonic() < self._disabled_until:
+            return False
+        if self._process is None or not self._process.is_alive():
+            self._start_worker()
+        return self._process is not None and self._process.is_alive()
+
+    def request(self, image_crop: np.ndarray, allow_low_confidence: bool) -> tuple[Optional[int], float, str, Optional[str]]:
+        with self._lock:
+            if not self._ensure_worker():
+                return None, 0.0, "ocr_worker_unavailable", "worker_not_running"
+
+            request_id = self._next_request_id
+            self._next_request_id += 1
+
+            try:
+                self._request_queue.put((request_id, image_crop, allow_low_confidence))
+            except Exception as exc:
+                return None, 0.0, "ocr_worker_unavailable", f"queue_put:{exc.__class__.__name__}"
+
+            deadline = time.monotonic() + _OCR_WORKER_TIMEOUT_SEC
+            while time.monotonic() < deadline:
+                if self._process is not None and not self._process.is_alive():
+                    self._failure_count += 1
+                    self._disabled_until = time.monotonic() + _OCR_WORKER_COOLDOWN_SEC
+                    return None, 0.0, "ocr_worker_crashed", "worker_exit"
+                try:
+                    response = self._response_queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+
+                response_id, jersey_num, jersey_conf, reason, error = response
+                if response_id != request_id:
+                    continue
+
+                if error:
+                    return None, 0.0, reason or "ocr_worker_error", error
+
+                return jersey_num, float(jersey_conf), reason or "not_run", None
+
+            self._failure_count += 1
+            self._disabled_until = time.monotonic() + _OCR_WORKER_COOLDOWN_SEC
+            return None, 0.0, "ocr_timeout", "timeout"
+
+
+class IsolatedJerseyRecognizer:
+    """Runs PaddleOCR in a subprocess to prevent native crashes from stopping the API."""
+
+    def __init__(self, confidence_threshold: float = 0.7) -> None:
+        self.confidence_threshold = confidence_threshold
+        self._worker = _OcrWorkerManager(confidence_threshold)
+        self._last_ocr_reason: str = "not_run"
+
+    @property
+    def last_ocr_reason(self) -> str:
+        return self._last_ocr_reason
+
+    def _set_last_ocr_reason(self, reason: str) -> None:
+        self._last_ocr_reason = reason
+
+    def preprocess_bbox_crop(
+        self,
+        frame: np.ndarray,
+        bbox: dict,
+        pad_percent: float = 0.05,
+        target_height: int = 64,
+    ) -> np.ndarray:
+        recognizer = JerseyRecognizer(confidence_threshold=self.confidence_threshold)
+        return recognizer.preprocess_bbox_crop(frame, bbox, pad_percent, target_height)
+
+    def extract_jersey_from_bbox(
+        self,
+        image_crop: np.ndarray,
+        allow_low_confidence: bool = False,
+    ) -> tuple[Optional[int], float]:
+        self._set_last_ocr_reason("not_run")
+
+        if image_crop is None or image_crop.size == 0:
+            self._set_last_ocr_reason("empty_crop")
+            return None, 0.0
+
+        if image_crop.shape[0] < 10 or image_crop.shape[1] < 10:
+            logger.debug("OCR crop too small: %sx%s", image_crop.shape[1], image_crop.shape[0])
+            self._set_last_ocr_reason("crop_too_small")
+            return None, 0.0
+
+        jersey_num, jersey_conf, reason, error = self._worker.request(image_crop, allow_low_confidence)
+        if error:
+            logger.warning("OCR worker failure: %s", error)
+        self._set_last_ocr_reason(reason)
+        return jersey_num, jersey_conf
 
 
 class JerseyRecognizer:

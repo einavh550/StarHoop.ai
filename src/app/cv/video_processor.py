@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.cv.detection import YOLODetector
-from app.cv.ocr import JerseyRecognizer
+from app.cv.ocr import IsolatedJerseyRecognizer
 from app.cv.tracking import build_tracker
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.video_job import VideoJob
@@ -33,10 +33,10 @@ def _to_decimal_seconds(raw_value: float) -> Decimal:
 
 
 class VideoProcessor:
-    def __init__(self, detector: YOLODetector, target_fps: int, jersey_recognizer: JerseyRecognizer | None = None) -> None:
+    def __init__(self, detector: YOLODetector, target_fps: int, jersey_recognizer: IsolatedJerseyRecognizer | None = None) -> None:
         self.detector = detector
         self.target_fps = max(target_fps, 1)
-        self.jersey_recognizer = jersey_recognizer or JerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
+        self.jersey_recognizer = jersey_recognizer or IsolatedJerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
 
     def process_job(self, db: Session, job: VideoJob) -> None:
         cv2 = _import_cv2_module()
@@ -186,7 +186,7 @@ class VideoProcessor:
 
 def reprocess_jersey_detections_from_video(db: Session, job: VideoJob) -> dict[str, int]:
     cv2 = _import_cv2_module()
-    recognizer = JerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
+    recognizer = IsolatedJerseyRecognizer(confidence_threshold=settings.ocr_confidence_threshold)
 
     frames = (
         db.query(DetectionFrame)
