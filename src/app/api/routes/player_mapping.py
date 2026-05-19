@@ -1,8 +1,4 @@
-"""
-Player mapping endpoints for Milestone 3 Phase 2.
-
-Maps detected jersey numbers to actual players based on team roster.
-"""
+"""Player mapping endpoints for Colab-ingested jersey detections."""
 
 import logging
 from typing import Annotated
@@ -12,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.cv.mapping import PlayerMapper
 from app.cv.schemas import PlayerMappingResponse, PlayerMappingSuggestion
-from app.cv.video_processor import reprocess_jersey_detections_from_video
 from app.db.models import VideoJob
 from app.db.session import get_db
 
@@ -25,7 +20,6 @@ router = APIRouter(prefix="/api/videos", tags=["player_mapping"])
 async def auto_map_players(
     job_id: int,
     team_id: Annotated[int, Query(..., description="Team ID for player lookup")],
-    recompute_from_frames: bool = False,
     db: Session = Depends(get_db),
 ) -> PlayerMappingResponse:
     """
@@ -57,9 +51,6 @@ async def auto_map_players(
                 status_code=400,
                 detail=f"VideoJob {job_id} belongs to team {job.team_id}, not {team_id}"
             )
-        
-        if recompute_from_frames:
-            reprocess_jersey_detections_from_video(db=db, job=job)
 
         # Aggregate jerseys
         aggregated = PlayerMapper.aggregate_jerseys_from_video(db, job_id, team_id)

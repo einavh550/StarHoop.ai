@@ -1,4 +1,4 @@
-"""Milestone 4 MVP action recognition endpoints."""
+"""Action detection endpoints."""
 
 from typing import Annotated
 

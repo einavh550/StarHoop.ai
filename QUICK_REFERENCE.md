@@ -67,9 +67,9 @@ Useful psql commands:
 \q
 ```
 
-## 5) Milestone 2 Video Flow
+## 5) Colab Ingestion Flow
 
-Upload:
+Create a job:
 
 ```powershell
 curl.exe -X POST "http://localhost:8000/api/videos/upload" `
@@ -77,10 +77,22 @@ curl.exe -X POST "http://localhost:8000/api/videos/upload" `
   -F "file=@C:\Users\einav\OneDrive\Desktop\basketballVideo.mp4"
 ```
 
+Send a Colab batch:
+
+```powershell
+python tools/test_colab_ingest.py
+```
+
 Poll status:
 
 ```powershell
 curl.exe "http://localhost:8000/api/videos/<job_id>"
+```
+
+If you need to point at a non-default host:
+
+```powershell
+python tools/test_colab_ingest.py --base-url "http://127.0.0.1:8000" --job-id 12
 ```
 
 Quick DB verify:
@@ -108,11 +120,10 @@ docker compose logs -f api
 `psql multiline prompt (starhoop-#)`
 - Cancel with Ctrl+C, then exit with `\q`.
 
-## 7) Milestone Scope Reminder
+## 7) Branch Scope Reminder
 
-Milestone 2 now:
-- Upload + process + persist detections
-- ByteTrack track_id continuity
-
-Milestone 3 later:
-- Jersey OCR and mapping track results to real players
+Current branch now:
+- Upload job metadata locally
+- Post Colab detections into the API
+- Persist frame batches in PostgreSQL
+- Query mapping and action views from stored data

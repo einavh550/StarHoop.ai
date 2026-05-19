@@ -1,11 +1,13 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.cv.schemas import VideoJobStatusResponse, VideoUploadResponse
+from app.cv.schemas import ColabDetectionBatch, VideoJobStatusResponse, VideoUploadResponse
 from app.cv.storage import parse_allowed_extensions, save_upload_file
-from app.cv.video_processor import process_video_job
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.team import Team
 from app.db.models.video_job import VideoJob
@@ -38,7 +40,6 @@ def _calculate_throughput_fps(processed_frames: int, processing_duration_sec: fl
 
 @router.post("/upload", response_model=VideoUploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_video(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     team_id: int = Form(...),
     db: Session = Depends(get_db),
@@ -69,12 +70,10 @@ async def upload_video(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(process_video_job, job.id)
-
     return VideoUploadResponse(
         job_id=job.id,
         status=job.status,
-        message="Upload accepted and processing started asynchronously.",
+        message="Upload accepted. Awaiting Colab GPU processing via ngrok tunnel.",
     )
 
 
@@ -174,3 +173,71 @@ def debug_ocr_crop(
         raise
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Debug crop failed: {exc}") from exc
+
+
+@router.post("/{job_id}/colab-detections", status_code=status.HTTP_202_ACCEPTED)
+async def ingest_colab_detections(
+    job_id: int,
+    payload: ColabDetectionBatch,
+    db: Session = Depends(get_db),
+) -> dict:
+    job = db.get(VideoJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"VideoJob {job_id} not found")
+
+    if job.status in {"pending", "failed"}:
+        job.status = "processing"
+
+    frame_rows = []
+    for frame in payload.frames:
+        detections_json = []
+        for det in frame.detections:
+            detections_json.append(
+                {
+                    "class_id": det.class_id,
+                    "class_name": det.class_name,
+                    "confidence": det.confidence,
+                    "track_id": det.track_id,
+                    "bbox": det.bbox.model_dump(),
+                    "team_id": det.team_id,
+                    "team_name": det.team_name,
+                    "jersey_number": det.jersey_number,
+                    "jersey_confidence": float(det.jersey_confidence),
+                    "player_id": det.player_id,
+                    "player_name": det.player_name,
+                }
+            )
+
+        frame_rows.append(
+            {
+                "video_job_id": job_id,
+                "frame_number": frame.frame_number,
+                "timestamp_sec": Decimal(f"{frame.timestamp_sec:.3f}"),
+                "detections_json": detections_json,
+            }
+        )
+
+    if frame_rows:
+        stmt = insert(DetectionFrame).values(frame_rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["video_job_id", "frame_number"],
+            set_={
+                "timestamp_sec": stmt.excluded.timestamp_sec,
+                "detections_json": stmt.excluded.detections_json,
+            },
+        )
+        db.execute(stmt)
+
+        job.processed_frames = (job.processed_frames or 0) + len(frame_rows)
+
+    if payload.final_batch:
+        job.status = "completed"
+
+    db.commit()
+
+    return {
+        "job_id": job_id,
+        "frames_ingested": len(frame_rows),
+        "final_batch": payload.final_batch,
+        "status": job.status,
+    }

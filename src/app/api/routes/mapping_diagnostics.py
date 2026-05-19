@@ -1,9 +1,4 @@
-"""
-Jersey mapping diagnostics endpoint for Milestone 3 Phase 2.5 (quality assurance).
-
-Provides visibility into mapping quality, confidence metrics, and per-track diagnostics.
-Helps identify issues before rendering exports or sharing results.
-"""
+"""Jersey mapping diagnostics endpoints and quality metrics."""
 
 from typing import Annotated
 

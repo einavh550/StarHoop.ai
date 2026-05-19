@@ -1,9 +1,4 @@
-"""Milestone 4 MVP action recognition service.
-
-This module implements a first-pass, model-free heuristic for shot attempt detection
-from tracked player motion. It is intentionally simple to ship end-to-end behavior
-before introducing heavier spatio-temporal models.
-"""
+"""Heuristic basketball action recognition service."""
 
 from __future__ import annotations
 

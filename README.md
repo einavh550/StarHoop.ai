@@ -1,42 +1,28 @@
 ﻿# StarHoop.ai
 
-StarHoop.ai is an AI-powered system for youth basketball coaches to automatically generate and share personalized player highlights from amateur smartphone footage using Computer Vision and Deep Learning.
+StarHoop.ai is an AI-assisted basketball analytics system for youth coaches. On this branch, Google Colab performs the heavy GPU inference while the local FastAPI app handles ingestion, persistence, and downstream queries.
 
 ## Project Overview
 
 Target audience: youth basketball coaches (players aged 6-13).
-Goal: automate extraction of personalized player highlights so coaches can provide parents with high-quality clips.
+Goal: accept Colab-generated detections, persist them in PostgreSQL, and serve job status and mapping views from the local API.
 
-Identification target: jersey number recognition (OCR). Profile photos are for UX only.
-Infrastructure: PostgreSQL (Docker) and Firebase (media storage in later milestones).
+Identification target: jersey number recognition and player identity mapping from Colab-ingested results.
+Infrastructure: PostgreSQL (Docker) for persistence and ngrok for secure Colab-to-local API tunneling.
 
 ## Tech Stack
 
 - Backend: Python, FastAPI, SQLAlchemy, Alembic
-- Computer Vision: YOLOv8 (detection), DeepSORT/ByteTrack (tracking), 3D CNNs (planned)
+- AI Execution: Google Colab + GPU runtime for detection, tracking, and jersey recognition
 - Frontend: Android Studio (Kotlin)
-- Data Management: PostgreSQL (relational), Firebase (blob storage)
+- Data Management: PostgreSQL (relational)
 
-## Development Milestones
+## Current Branch Focus
 
-- Milestone 1: Infrastructure - modular Python structure, PostgreSQL schema, validation tests
-- Milestone 2: Perception - YOLOv8 + tracking
-- Milestone 3: Identity - jersey OCR + DB mapping
-- Milestone 4: Action recognition - spatio-temporal analysis
-- Milestone 5: Video engine - temporal segmentation and clipping
-- Milestone 6: Full integration - Kotlin mobile UI + API connection
-
-## Current Milestone Status
-
-- Milestone 1: ✅ Complete (schema, migrations, base API, tests)
-- Milestone 2: ✅ Complete (YOLOv8 + ByteTrack detection + tracking, persistence)
-- Milestone 3 (Phase 1): ✅ Complete (Jersey OCR extraction via PaddleOCR)
-- Milestone 3 (Phase 2): ✅ Complete (Player identity mapping - jersey_detections table + auto-mapping endpoint)
-- Milestone 4: Planned (Action recognition - spatio-temporal analysis)
-- Milestone 5: Planned (Video clipping engine)
-- Milestone 6: Planned (Mobile integration)
-
-Important: `track_id` is a tracker identity assigned by ByteTrack. Jersey numbers are recognized via PaddleOCR in M3P1 and mapped to Player records in M3P2.
+- Colab generates detections, tracks, team labels, jersey numbers, and player names.
+- The local API receives batched frame payloads at `POST /api/videos/{job_id}/colab-detections`.
+- PostgreSQL stores the ingested results in `video_jobs`, `detection_frames`, and `jersey_detections`.
+- Player mapping and action endpoints operate on stored data rather than running local CV inference.
 
 ## Quick Start (Recommended: Docker Compose)
 
@@ -70,15 +56,14 @@ docker compose exec api alembic upgrade head
 docker compose exec api pytest -v
 ```
 
-## Milestone 2 (Current Implementation)
+## Local API Surface
 
 ### Implemented
 
-- Async video ingestion endpoint: `POST /api/videos/upload`
+- Upload endpoint for creating jobs: `POST /api/videos/upload`
+- Colab batch ingestion endpoint: `POST /api/videos/{job_id}/colab-detections`
 - Job status endpoint: `GET /api/videos/{job_id}`
 - Persistence tables: `video_jobs`, `detection_frames`
-- ByteTrack-first tracking with DeepSORT scaffold
-- CV processing orchestrator for frame extraction and per-frame persistence
 - Processing metrics in status response: `progress_percent`, `processing_duration_sec`, `throughput_fps`
 
 ### API Endpoints
@@ -117,14 +102,14 @@ Expected lifecycle:
 - `progress_percent` reaches `100.0`
 - `processing_duration_sec` and `throughput_fps` are present
 
-## Milestone 2 Acceptance Criteria
+## Smoke Test Criteria
 
-Milestone 2 is considered valid when all are true:
+The branch is considered healthy when all are true:
 
 1. Upload endpoint returns `202` with a `job_id`.
-2. Job reaches `completed` with `error_message = null`.
-3. `processed_frames == total_frames` at completion.
-4. Detection rows exist in `detection_frames` for the job.
+2. Colab batch ingestion returns `202` for a valid job.
+3. Detection rows exist in `detection_frames` for the job.
+4. Job status can be queried successfully.
 
 Tip: if `team_id` does not exist, insert coach/team first and reuse the returned team ID.
 
@@ -142,7 +127,7 @@ docker compose exec db psql -U postgres -d starhoop -c "SELECT COUNT(*) AS detec
 docker compose exec db psql -U postgres -d starhoop -c "SELECT frame_number, timestamp_sec, detections_json FROM detection_frames WHERE video_job_id=<job_id> LIMIT 1;"
 ```
 
-## MILESTONE 1: Setup and Validation (Historical Baseline)
+## Historical Baseline
 
 ### 1. Prerequisites
 
@@ -201,11 +186,11 @@ StarHoop.ai/
 |  |  |- api/routes/health.py
 |  |  |- api/routes/videos.py
 |  |  |- core/config.py
-|  |  |- cv/detection.py
-|  |  |- cv/tracking.py
-|  |  |- cv/video_processor.py
 |  |  |- cv/storage.py
 |  |  |- cv/schemas.py
+|  |  |- cv/mapping.py
+|  |  |- cv/actions.py
+|  |  |- cv/annotated_export.py
 |  |  |- db/base.py
 |  |  |- db/session.py
 |  |  |- db/schema.sql
@@ -223,32 +208,13 @@ StarHoop.ai/
 |- README.md
 ```
 
-## Database Schema (Milestone 1 Baseline)
+## Database Schema
 
 Hierarchy:
 - Coach -> Team -> Player -> Highlight
 
-Milestone 2 additions:
+Current data flow additions:
 - VideoJob -> DetectionFrame
-
-## What Is Implemented vs Deferred
-
-Implemented now:
-- YOLOv8 person detection
-- ByteTrack-based tracking IDs
-- Async job lifecycle in `video_jobs`
-- Frame-level persistence in `detection_frames`
-- Dockerized runtime for reproducibility
-
-Deferred to Milestone 3+:
-- Jersey OCR and mapping to `players.jersey_number`
-- Action recognition and highlight generation
-
-## Next Steps (Remaining Milestone 2 Work)
-
-- Improve tracker quality for hard occlusions
-- Implement DeepSORT adapter fully or keep ByteTrack-only strategy explicitly
-- Add richer operational metrics if needed
 
 ## Repository Notes
 
@@ -274,7 +240,7 @@ docker compose exec api alembic upgrade head
 
 ## Contributing
 
-This is a Computer Science final project. Contributions are welcome after milestone validation milestones are coordinated.
+This is a Computer Science final project. Keep changes aligned with the current Colab-first branch architecture.
 
 ## License
 

@@ -26,6 +26,52 @@ class DetectionFramePayload(BaseModel):
     detections: list[Detection] = Field(default_factory=list)
 
 
+class ColabBoundingBox(BaseModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+    class Config:
+        extra = "forbid"
+
+
+class ColabDetection(BaseModel):
+    track_id: int
+    bbox: ColabBoundingBox
+    class_id: int | None = None
+    class_name: str | None = None
+    confidence: float | None = None
+    team_id: int | None = None
+    team_name: str | None = None
+    jersey_number: int | None = None
+    jersey_confidence: float = 0.0
+    player_id: int | None = None
+    player_name: str | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class ColabFramePayload(BaseModel):
+    frame_number: int
+    timestamp_sec: float
+    detections: list[ColabDetection] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+class ColabDetectionBatch(BaseModel):
+    batch_id: str | None = None
+    source: str | None = "colab"
+    final_batch: bool = False
+    frames: list[ColabFramePayload] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
 class VideoUploadResponse(BaseModel):
     job_id: int
     status: str

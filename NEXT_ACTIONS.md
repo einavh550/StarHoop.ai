@@ -1,14 +1,13 @@
-﻿# NEXT ACTIONS - StarHoop.ai (April 27, 2026)
+﻿# NEXT ACTIONS - StarHoop.ai (Colab Hybrid Branch)
 
 ## Status Snapshot
 
-**Milestone 3 Phase 2 (Player Identity Mapping)**: ✅ COMPLETE
-- Jersey detection aggregation table (jersey_detections)
-- Auto-mapping endpoint: `POST /api/videos/{job_id}/player_mapping/auto`
-- Maps detected jersey numbers to Player records per team
-- Confidence rating system (high/medium/low/no_match)
-- All tests passing (12 unit + 9 integration)
-- Migration applied via Alembic
+**Branch goal**: Colab performs detection, tracking, and jersey recognition; the local FastAPI app persists and serves results.
+
+**Completed on this branch**
+- Batch ingestion endpoint: `POST /api/videos/{job_id}/colab-detections`
+- Local CV execution removed from the runtime path
+- Docker smoke test passes against a real job
 
 ## Immediate Actions (Do First)
 
@@ -36,9 +35,9 @@ curl.exe "http://localhost:8000/health/"
 docker compose exec api pytest -v
 ```
 
-## Milestone 2 Validation Flow (Teammate-Friendly)
+## Smoke Test Flow
 
-1. Create coach and team in DB (one time):
+1. Create coach and team in DB if needed:
 
 ```powershell
 docker compose exec db psql -U postgres -d starhoop
@@ -73,36 +72,24 @@ docker compose exec db psql -U postgres -d starhoop -c "SELECT id, status, total
 docker compose exec db psql -U postgres -d starhoop -c "SELECT COUNT(*) FROM detection_frames WHERE video_job_id=<job_id>;"
 ```
 
-## Milestone 2 Done Definition
+## Branch Done Definition
 
-Milestone 2 is accepted when:
+This branch is in good shape when:
 
 1. Upload returns `202` with a valid `job_id`.
-2. Job transitions to `completed`.
-3. `processed_frames` equals `total_frames`.
-4. Detection rows exist for that `job_id`.
-5. `error_message` is null.
+2. Colab batch ingestion returns `202` for a valid job.
+3. Detection rows exist for that `job_id`.
+4. The health endpoint reports `database: connected`.
 
-## Remaining Work (Not Blocking M2 Signoff)
+## Remaining Work
 
-1. Improve tracker quality for hard occlusions.
-2. Implement DeepSORT adapter or formally keep ByteTrack-only strategy.
-3. Add richer operational metrics if needed.
+1. Decide whether to archive the historical milestone docs or leave them as reference.
+2. Tighten any remaining user-facing docs that still mention the old local CV pipeline.
+3. Add auth for the ngrok ingestion endpoint if the tunnel will be exposed outside your machine.
 
-## Explicit Deferrals
+## Git Release Step
 
-- Jersey OCR and player identity mapping -> Milestone 3.
-- Action recognition and clip generation -> Milestone 4/5.
-
-## Git Release Steps
-
-After docs are updated and reviewed:
-
-1. Commit 1: core milestone docs.
-2. Commit 2: validation and quick reference docs.
-3. Commit 3: final consistency/polish (and any related runtime notes).
-
-Push:
+Push when ready:
 
 ```powershell
 git push origin main
