@@ -69,6 +69,14 @@ Useful psql commands:
 
 ## 5) Colab Ingestion Flow
 
+Start ngrok (one-time auth + tunnel):
+
+```powershell
+# take the authtoken from this path: https://dashboard.ngrok.com/get-started/setup/windows
+ngrok config add-authtoken <NGROK_AUTHTOKEN> 
+ngrok http 80
+```
+
 Create a job:
 
 ```powershell
@@ -81,6 +89,22 @@ Send a Colab batch:
 
 ```powershell
 python tools/test_colab_ingest.py
+```
+
+Colab exporter helper (real detections):
+
+```python
+from tools.colab_exporter import ColabIngestClient, ColabBatchBuffer, build_frame_payload
+
+client = ColabIngestClient(base_url="<ngrok_url>", job_id=<job_id>)
+buffer = ColabBatchBuffer(client, max_frames=120, max_bytes=900_000)
+
+# for each frame in Colab
+frame_payload = build_frame_payload(frame_number, timestamp_sec, detections)
+buffer.add_frame(frame_payload)
+
+# after last frame
+buffer.flush(final_batch=True)
 ```
 
 Poll status:
