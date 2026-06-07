@@ -24,7 +24,7 @@ def test_detect_shot_attempt_positive_case() -> None:
     assert candidate.mapped_player_id == 7
     assert 0.6 <= candidate.action_confidence <= 1.0
 
-
+    
 def test_detect_shot_attempt_negative_case_insufficient_motion() -> None:
     observations = [
         TrackObservation(frame_number=0, timestamp_sec=0.00, center_y=240.0, detection_confidence=0.90),
