@@ -1,12 +1,21 @@
 from decimal import Decimal
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.cv.schemas import ColabDetectionBatch, VideoJobStatusResponse, VideoUploadResponse
+from app.core.security import SIGNATURE_HEADER, verify_signature
+from app.cv import orchestration, r2_storage
+from app.cv.schemas import (
+    ColabDetectionBatch,
+    JobStatusUpdate,
+    VideoJobStatusResponse,
+    VideoUploadResponse,
+)
 from app.cv.storage import parse_allowed_extensions, save_upload_file
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.team import Team
@@ -70,10 +79,38 @@ async def upload_video(
     db.commit()
     db.refresh(job)
 
+    if not settings.enable_modal_orchestration:
+        return VideoUploadResponse(
+            job_id=job.id,
+            status=job.status,
+            message="Upload accepted. Awaiting Colab GPU processing via ngrok tunnel.",
+        )
+
+    # Orchestration enabled: mirror the saved video to R2 and spawn the deployed
+    # Modal GPU job, handing it a short-lived presigned download URL. The worker
+    # streams detection batches back to the /colab-detections webhook.
+    try:
+        object_key = f"videos/{job.id}/{Path(storage_path).name}"
+        r2_storage.upload_video(local_path=storage_path, key=object_key)
+        presigned_url = r2_storage.generate_presigned_get_url(object_key)
+        job.remote_video_url = presigned_url
+
+        job.modal_call_id = orchestration.spawn_processing(job_id=job.id, video_url=presigned_url)
+        job.status = "processing"
+        db.commit()
+    except (r2_storage.R2ConfigurationError, orchestration.OrchestrationError) as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to start GPU processing: {exc}",
+        ) from exc
+
     return VideoUploadResponse(
         job_id=job.id,
         status=job.status,
-        message="Upload accepted. Awaiting Colab GPU processing via ngrok tunnel.",
+        message="Upload accepted. GPU processing started on Modal.",
     )
 
 
@@ -102,6 +139,37 @@ def get_video_job_status(job_id: int, db: Session = Depends(get_db)) -> VideoJob
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+@router.post("/{job_id}/cancel", status_code=status.HTTP_200_OK)
+def cancel_video_job(job_id: int, db: Session = Depends(get_db)) -> dict:
+    """Cancel a running job.
+
+    Idempotent by design: canceling an already terminal job simply returns the
+    current status.
+    """
+    job = db.get(VideoJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with id={job_id} was not found.")
+
+    if job.status in {"completed", "failed", "canceled"}:
+        return {"job_id": job.id, "status": job.status, "message": "Job already terminal."}
+
+    # Best effort: if a Modal call id is known, ask Modal to stop execution.
+    if job.modal_call_id:
+        try:
+            orchestration.cancel_processing(job.modal_call_id)
+        except orchestration.OrchestrationError as exc:
+            # We still mark the job canceled locally so UX remains deterministic.
+            job.status = "canceled"
+            job.error_message = f"Cancelled by user (Modal cancel warning: {exc})"
+            db.commit()
+            return {"job_id": job.id, "status": job.status, "message": job.error_message}
+
+    job.status = "canceled"
+    job.error_message = "Cancelled by user"
+    db.commit()
+    return {"job_id": job.id, "status": job.status, "message": job.error_message}
 
 
 @router.get("/{job_id}/ocr/debug/crop")
@@ -179,11 +247,32 @@ def debug_ocr_crop(
 async def ingest_colab_detections(
     job_id: int,
     payload: ColabDetectionBatch,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> dict:
+    # Verify the HMAC signature when a shared secret is configured. The worker
+    # signs the exact raw body; we recompute it over the same bytes. When no
+    # secret is set (local dev) verification is skipped for backward compat.
+    if settings.webhook_hmac_secret:
+        raw_body = await request.body()
+        signature = request.headers.get(SIGNATURE_HEADER)
+        if not verify_signature(settings.webhook_hmac_secret, raw_body, signature):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing webhook signature.",
+            )
+
     job = db.get(VideoJob, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"VideoJob {job_id} not found")
+
+    if job.status == "canceled":
+        return {
+            "job_id": job_id,
+            "frames_ingested": 0,
+            "final_batch": payload.final_batch,
+            "status": job.status,
+        }
 
     if job.status in {"pending", "failed"}:
         job.status = "processing"
@@ -241,3 +330,47 @@ async def ingest_colab_detections(
         "final_batch": payload.final_batch,
         "status": job.status,
     }
+
+
+@router.post("/{job_id}/status", status_code=status.HTTP_200_OK)
+async def update_job_status(
+    job_id: int,
+    payload: JobStatusUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Out-of-band status signal from the Modal worker (Milestone 4).
+
+    The worker calls this when processing ends without a ``final_batch`` — most
+    importantly to report a terminal failure (e.g. an undecodable video) so the
+    job leaves ``processing`` and surfaces a clear ``error_message`` to clients.
+    Signed and verified with the same HMAC secret as ``/colab-detections``.
+    """
+    if settings.webhook_hmac_secret:
+        raw_body = await request.body()
+        signature = request.headers.get(SIGNATURE_HEADER)
+        if not verify_signature(settings.webhook_hmac_secret, raw_body, signature):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing webhook signature.",
+            )
+
+    new_status = payload.status.strip().lower()
+    if new_status not in {"processing", "completed", "failed", "canceled"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported status '{payload.status}'.",
+        )
+
+    job = db.get(VideoJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"VideoJob {job_id} not found")
+
+    if job.status == "canceled" and new_status != "canceled":
+        return {"job_id": job_id, "status": job.status}
+
+    job.status = new_status
+    job.error_message = payload.error_message if new_status in {"failed", "canceled"} else None
+    db.commit()
+
+    return {"job_id": job_id, "status": job.status}

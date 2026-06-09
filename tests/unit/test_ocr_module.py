@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from types import SimpleNamespace
 
-from app.cv.ocr import JerseyRecognizer
+from app.cv.ocr import JerseyRecognizer, recognize_jersey_number
 
 
 @pytest.fixture
@@ -200,3 +200,38 @@ class TestJerseyRecognizerIntegration:
         # Don't actually access .ocr_model in test env (would require PaddleOCR installed)
         # Just verify the attribute exists and is None initially
         assert hasattr(recognizer, '_ocr_model')
+
+
+class TestSmolVLMJerseyRecognition:
+    def test_recognize_jersey_number_uses_prompt_path(self):
+        class PromptModel:
+            def prompt(self, images, prompt):
+                return [" #23 "]
+
+        crop = np.ones((20, 20, 3), dtype=np.uint8)
+        assert recognize_jersey_number(PromptModel(), crop, "Read the number.") == "23"
+
+    def test_recognize_jersey_number_uses_staged_adapter_path(self):
+        class StagedModel:
+            def preprocess(self, image, prompt=""):
+                return ({"input_ids": [1]}, {"image_dims": (20, 20)})
+
+            def predict(self, inputs):
+                assert inputs == {"input_ids": [1]}
+                return "predictions"
+
+            def postprocess(self, predictions, metadata):
+                assert predictions == "predictions"
+                assert metadata == {"image_dims": (20, 20)}
+                return [{"response": "24"}]
+
+        crop = np.ones((20, 20, 3), dtype=np.uint8)
+        assert recognize_jersey_number(StagedModel(), crop, "Read the number.") == "24"
+
+    def test_recognize_jersey_number_returns_none_on_crop_failure(self):
+        class BrokenModel:
+            def prompt(self, images, prompt):
+                raise RuntimeError("boom")
+
+        crop = np.ones((20, 20, 3), dtype=np.uint8)
+        assert recognize_jersey_number(BrokenModel(), crop, "Read the number.") is None

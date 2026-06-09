@@ -78,7 +78,7 @@ def check_imports() -> dict:
     return report
 
 
-@app.cls(image=cv_image, gpu="L4", secrets=[hoopstar_secret], timeout=900)
+@app.cls(image=cv_image, gpu="L4", secrets=[hoopstar_secret], timeout=3600)
 class BasketballModels:
     """Warm-loads all four models once when the container starts.
 
@@ -122,6 +122,146 @@ class BasketballModels:
         print(f"[hoopstar-cv] verify report: {report}")
         return report
 
+    @modal.method()
+    def process_video(
+        self, video_url: str, batch_size: int = 30, max_frames: int | None = None
+    ) -> list[dict]:
+        """Download a video, run the full CV pipeline, return detection batches.
+
+        Milestone 3 deliverable: proves the warm models actually turn a video
+        into validated ``ColabDetectionBatch`` JSON. The webhook POST + R2 upload
+        wiring comes in Milestone 4; here we just download the clip and return the
+        batches (as dicts) to the caller. ``max_frames`` caps processing for the
+        smoke test.
+        """
+        import tempfile
+        import urllib.request
+        from pathlib import Path
+
+        from app.cv.pipeline import process_video as run_pipeline
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        video_path = tmp_dir / "input.mp4"
+        print(f"[hoopstar-cv] downloading {video_url}")
+        urllib.request.urlretrieve(video_url, video_path)  # noqa: S310 - trusted test URL
+        print(f"[hoopstar-cv] downloaded to {video_path} ({video_path.stat().st_size} bytes)")
+
+        batches: list[dict] = []
+        for batch in run_pipeline(
+            str(video_path),
+            detector=self.detector,
+            ocr=self.ocr,
+            predictor=self.predictor,
+            team_classifier=self.team_classifier,
+            batch_size=batch_size,
+            max_frames=max_frames,
+            source="modal",
+        ):
+            batches.append(batch.model_dump())
+            print(
+                f"[hoopstar-cv] batch: {len(batch.frames)} frames, "
+                f"final={batch.final_batch}"
+            )
+
+        return batches
+
+    @modal.method()
+    def process_and_callback(
+        self,
+        video_url: str,
+        job_id: int,
+        callback_url: str,
+        hmac_secret: str = "",
+        batch_size: int = 30,
+        max_frames: int | None = None,
+    ) -> dict:
+        """Milestone 4: process a video and stream signed batches to the API.
+
+        Spawned by FastAPI's ``/upload``. Downloads the presigned R2 ``video_url``,
+        runs the pipeline, and POSTs each ``ColabDetectionBatch`` to
+        ``callback_url`` (the ``/colab-detections`` webhook). Each request body is
+        signed with HMAC-SHA256 using the shared ``hmac_secret`` so the API can
+        verify it really came from this worker. The pipeline's final batch carries
+        ``final_batch=True``, which flips the job to ``completed`` on the API side.
+        """
+        import json
+        import tempfile
+        import urllib.request
+        from pathlib import Path
+
+        from app.core.security import SIGNATURE_HEADER, sign_payload
+        from app.cv.pipeline import process_video as run_pipeline
+        from app.cv.transcode import normalize_video, probe_codec
+
+        # The /status callback shares the base path with /colab-detections; derive
+        # it so the worker can report a terminal failure (e.g. an undecodable
+        # video) instead of leaving the job stuck on "processing".
+        status_url = callback_url.rsplit("/", 1)[0] + "/status"
+
+        def _signed_post(url: str, body: bytes) -> None:
+            headers = {"Content-Type": "application/json"}
+            if hmac_secret:
+                headers[SIGNATURE_HEADER] = sign_payload(hmac_secret, body)
+            request = urllib.request.Request(  # noqa: S310 - operator-supplied callback
+                url, data=body, headers=headers, method="POST"
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+                response.read()
+
+        def post_batch(batch) -> None:
+            _signed_post(callback_url, batch.model_dump_json().encode("utf-8"))
+
+        def report_failure(message: str) -> None:
+            body = json.dumps({"status": "failed", "error_message": message}).encode("utf-8")
+            try:
+                _signed_post(status_url, body)
+            except Exception as callback_exc:  # noqa: BLE001 - best-effort notify
+                print(f"[hoopstar-cv] job {job_id}: failed to report failure: {callback_exc}")
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        download_path = tmp_dir / "input.mp4"
+        print(f"[hoopstar-cv] job {job_id}: downloading video")
+        try:
+            urllib.request.urlretrieve(video_url, download_path)  # noqa: S310 - presigned R2 URL
+        except Exception as exc:  # noqa: BLE001
+            report_failure(f"Could not download video: {exc}")
+            raise
+
+        # Normalize the codec to H.264/yuv420p so OpenCV can decode any source
+        # (AV1, HEVC, phone recordings) the bundled ffmpeg would otherwise reject.
+        source_codec = probe_codec(download_path)
+        print(f"[hoopstar-cv] job {job_id}: source codec={source_codec or 'unknown'}, normalizing")
+        try:
+            video_path = normalize_video(download_path)
+        except Exception as exc:  # noqa: BLE001
+            report_failure(f"Could not normalize video (codec={source_codec or 'unknown'}): {exc}")
+            raise
+
+        batches_sent = 0
+        try:
+            for batch in run_pipeline(
+                str(video_path),
+                detector=self.detector,
+                ocr=self.ocr,
+                predictor=self.predictor,
+                team_classifier=self.team_classifier,
+                batch_size=batch_size,
+                max_frames=max_frames,
+                source="modal",
+            ):
+                post_batch(batch)
+                batches_sent += 1
+                print(
+                    f"[hoopstar-cv] job {job_id}: sent batch {batches_sent} "
+                    f"({len(batch.frames)} frames, final={batch.final_batch})"
+                )
+        except Exception as exc:  # noqa: BLE001 - report then re-raise so Modal records it
+            report_failure(f"Processing failed: {exc}")
+            raise
+
+        print(f"[hoopstar-cv] job {job_id}: done, {batches_sent} batches sent")
+        return {"job_id": job_id, "batches_sent": batches_sent}
+
 
 @app.local_entrypoint()
 def main() -> None:
@@ -157,3 +297,56 @@ def warmup() -> None:
         print("Milestone 2 PASSED: all four models warm-loaded on Modal GPU.")
     else:
         print("Milestone 2 FAILED: one or more models did not load (see report).")
+
+
+# A short, public, royalty-free clip used only to prove the pipeline end-to-end.
+# This is throwaway M3 test scaffolding — production videos arrive via the
+# upload -> R2 -> Modal flow built in Milestone 4.
+SAMPLE_VIDEO_URL = (
+    "https://media.roboflow.com/supervision/video-examples/basketball-1.mp4"
+)
+
+
+@app.local_entrypoint()
+def process(video_url: str = SAMPLE_VIDEO_URL, max_frames: int = 90) -> None:
+    """Milestone 3 smoke test: run the pipeline on a short clip and validate.
+
+    Usage:
+        modal run -m modal_app.cv_app::process
+        modal run -m modal_app.cv_app::process --video-url <url> --max-frames 150
+    """
+    from app.cv.schemas import ColabDetectionBatch
+
+    batches = BasketballModels().process_video.remote(video_url, max_frames=max_frames)
+
+    total_frames = 0
+    total_detections = 0
+    class_names: set[str] = set()
+    last_ts = -1.0
+    monotonic = True
+
+    for raw in batches:
+        # Round-trip through the schema to prove the contract holds exactly.
+        batch = ColabDetectionBatch(**raw)
+        for frame in batch.frames:
+            total_frames += 1
+            total_detections += len(frame.detections)
+            if frame.timestamp_sec < last_ts:
+                monotonic = False
+            last_ts = frame.timestamp_sec
+            for det in frame.detections:
+                if det.class_name:
+                    class_names.add(det.class_name)
+
+    print("\n=== Milestone 3 result ===")
+    print(f"batches:          {len(batches)}")
+    print(f"frames:           {total_frames}")
+    print(f"detections:       {total_detections}")
+    print(f"class names seen: {sorted(class_names)}")
+    print(f"timestamps monotonic: {monotonic}")
+
+    ok = total_frames > 0 and total_detections > 0 and monotonic
+    if ok:
+        print("Milestone 3 PASSED: pipeline produced valid detection batches.")
+    else:
+        print("Milestone 3 FAILED: see counts above.")

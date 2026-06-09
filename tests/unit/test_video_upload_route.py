@@ -56,8 +56,8 @@ def _fake_process_video_job(_job_id: int):
 
 def test_upload_video_returns_job_id(monkeypatch) -> None:
     fake_db = _FakeDB(team_exists=True)
+    monkeypatch.setattr(videos_routes.settings, "enable_modal_orchestration", False)
     monkeypatch.setattr(videos_routes, "save_upload_file", _fake_save_upload_file)
-    monkeypatch.setattr(videos_routes, "process_video_job", _fake_process_video_job)
 
     app.dependency_overrides[get_db] = _override_db(fake_db)
     try:
@@ -78,8 +78,8 @@ def test_upload_video_returns_job_id(monkeypatch) -> None:
 
 def test_upload_video_returns_404_when_team_missing(monkeypatch) -> None:
     fake_db = _FakeDB(team_exists=False)
+    monkeypatch.setattr(videos_routes.settings, "enable_modal_orchestration", False)
     monkeypatch.setattr(videos_routes, "save_upload_file", _fake_save_upload_file)
-    monkeypatch.setattr(videos_routes, "process_video_job", _fake_process_video_job)
 
     app.dependency_overrides[get_db] = _override_db(fake_db)
     try:
@@ -129,3 +129,61 @@ def test_get_video_job_status_returns_payload() -> None:
     assert payload["progress_percent"] == 50.0
     assert payload["processing_duration_sec"] == 30.0
     assert payload["throughput_fps"] == 3.0
+
+
+def test_cancel_video_job_marks_processing_job_as_canceled(monkeypatch) -> None:
+    fake_db = _FakeDB(team_exists=True)
+    fake_db.jobs[7] = VideoJob(
+        id=7,
+        team_id=1,
+        status="processing",
+        source_filename="game.mp4",
+        storage_path="C:/tmp/game.mp4",
+        remote_video_url="https://example.test/video.mp4",
+        modal_call_id="fc-123",
+        tracker_name="bytetrack",
+        model_name="yolov8n.pt",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    monkeypatch.setattr(videos_routes.orchestration, "cancel_processing", lambda _call_id: None)
+
+    app.dependency_overrides[get_db] = _override_db(fake_db)
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/videos/7/cancel")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "canceled"
+    assert fake_db.jobs[7].status == "canceled"
+    assert "Cancelled by user" in (fake_db.jobs[7].error_message or "")
+
+
+def test_cancel_video_job_is_idempotent_for_terminal_job() -> None:
+    fake_db = _FakeDB(team_exists=True)
+    fake_db.jobs[8] = VideoJob(
+        id=8,
+        team_id=1,
+        status="completed",
+        source_filename="game.mp4",
+        storage_path="C:/tmp/game.mp4",
+        tracker_name="bytetrack",
+        model_name="yolov8n.pt",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    app.dependency_overrides[get_db] = _override_db(fake_db)
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/videos/8/cancel")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"

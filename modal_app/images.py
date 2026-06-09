@@ -24,7 +24,18 @@ Secrets (created by the user once, see cv_app.py docstring):
 
 from __future__ import annotations
 
+import pathlib
+import sys
+
 import modal
+
+# Make the ``src/app`` package importable locally so ``add_local_python_source
+# ("app")`` below can find it. The repo uses a src-layout (see pytest.ini
+# ``pythonpath = src``); when ``modal run`` executes this module that path is not
+# automatically present, so we add it here.
+_SRC_DIR = str(pathlib.Path(__file__).resolve().parent.parent / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 # --- SAM-2 real-time fork location + checkpoint -----------------------------
 SAM2_REPO = "https://github.com/Gy920/segment-anything-2-real-time.git"
@@ -144,6 +155,10 @@ cv_image = (
     # does NOT invalidate the cached native build above. Run with the module form
     # `modal run -m modal_app.cv_app::main` so the package name resolves.
     .add_local_python_source("modal_app")
+    # Ship the application package (``src/app``) too, so the container can import
+    # ``app.cv.pipeline`` / ``app.cv.models`` / ``app.cv.schemas`` for Milestone 3
+    # video processing. Same lightweight final mount layer as above.
+    .add_local_python_source("app")
 )
 
 

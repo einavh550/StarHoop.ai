@@ -72,6 +72,21 @@ class ColabDetectionBatch(BaseModel):
         extra = "forbid"
 
 
+class JobStatusUpdate(BaseModel):
+    """Out-of-band job status signal POSTed by the Modal worker.
+
+    Lets the worker report a terminal failure (e.g. a video it could not decode)
+    so the API flips the job to ``failed`` with a human-readable message instead
+    of leaving it stuck on ``processing``.
+    """
+
+    status: str
+    error_message: str | None = None
+
+    class Config:
+        extra = "forbid"
+
+
 class VideoUploadResponse(BaseModel):
     job_id: int
     status: str

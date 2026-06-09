@@ -14,7 +14,7 @@ class VideoJob(Base):
     __tablename__ = "video_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'processing', 'completed', 'failed')",
+            "status IN ('pending', 'processing', 'completed', 'failed', 'canceled')",
             name="ck_video_jobs_status",
         ),
     )
@@ -24,6 +24,8 @@ class VideoJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    remote_video_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    modal_call_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tracker_name: Mapped[str] = mapped_column(String(32), nullable=False, default="bytetrack")
     model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="yolov8n")
     total_frames: Mapped[int | None] = mapped_column(Integer, nullable=True)
