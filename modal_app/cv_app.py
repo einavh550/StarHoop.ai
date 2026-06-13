@@ -78,7 +78,7 @@ def check_imports() -> dict:
     return report
 
 
-@app.cls(image=cv_image, gpu="L4", secrets=[hoopstar_secret], timeout=3600)
+@app.cls(image=cv_image, gpu="A10G", secrets=[hoopstar_secret], timeout=3600)
 class BasketballModels:
     """Warm-loads all four models once when the container starts.
 
@@ -94,6 +94,15 @@ class BasketballModels:
         from sports import TeamClassifier
 
         self.cuda = torch.cuda.is_available()
+
+        # Enable TF32 + cuDNN autotuning on the A10 (Ampere). TF32 speeds up the
+        # matmul/conv-heavy detector + SAM-2 tracker with negligible accuracy loss;
+        # cudnn.benchmark lets cuDNN pick the fastest kernels for our fixed frame
+        # sizes. These are global, idempotent, and safe to set once per container.
+        if self.cuda:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
 
         # RF-DETR player detector + SmolVLM2 jersey OCR (Roboflow, need API key).
         self.detector = get_model(model_id=PLAYER_DETECTION_MODEL_ID)
@@ -173,6 +182,7 @@ class BasketballModels:
         callback_url: str,
         hmac_secret: str = "",
         batch_size: int = 30,
+        frame_stride: int = 1,
         max_frames: int | None = None,
     ) -> dict:
         """Milestone 4: process a video and stream signed batches to the API.
@@ -246,6 +256,7 @@ class BasketballModels:
                 predictor=self.predictor,
                 team_classifier=self.team_classifier,
                 batch_size=batch_size,
+                frame_stride=frame_stride,
                 max_frames=max_frames,
                 source="modal",
             ):
@@ -261,6 +272,122 @@ class BasketballModels:
 
         print(f"[hoopstar-cv] job {job_id}: done, {batches_sent} batches sent")
         return {"job_id": job_id, "batches_sent": batches_sent}
+
+    @modal.method()
+    def process_chunk(
+        self,
+        video_url: str,
+        job_id: int,
+        chunk_index: int,
+        start_frame: int,
+        end_frame: int,
+        track_id_offset: int,
+        callback_url: str,
+        status_url: str,
+        hmac_secret: str = "",
+        frame_stride: int = 1,
+    ) -> dict:
+        """Chunked parallel worker: process one time-segment and stream batches.
+
+        Spawned by ``spawn_chunked_processing`` via the fan-out orchestration
+        path. Each chunk owns frames ``[start_frame, end_frame)`` and offsets
+        its SAM-2 track IDs by ``track_id_offset`` so all chunks for a job can
+        write to the same ``detection_frames`` table without collisions.
+
+        The first chunk (``chunk_index == 0``) also probes ``total_frames`` and
+        POSTs it to the ``/total-frames`` endpoint so the API can surface real
+        progress to callers.
+        """
+        import json
+        import tempfile
+        import urllib.request
+        from pathlib import Path
+
+        from app.core.security import SIGNATURE_HEADER, sign_payload
+        from app.cv.pipeline import process_video as run_pipeline
+        from app.cv.transcode import normalize_video, probe_codec
+
+        def _signed_post(url: str, body: bytes) -> None:
+            headers = {"Content-Type": "application/json"}
+            if hmac_secret:
+                headers[SIGNATURE_HEADER] = sign_payload(hmac_secret, body)
+            req = urllib.request.Request(  # noqa: S310
+                url, data=body, headers=headers, method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                resp.read()
+
+        def post_batch(batch) -> None:
+            _signed_post(callback_url, batch.model_dump_json().encode())
+
+        def report_failure(message: str) -> None:
+            body = json.dumps({
+                "status": "failed",
+                "error_message": message,
+                "chunk_index": chunk_index,
+            }).encode()
+            try:
+                _signed_post(status_url, body)
+            except Exception as cb_exc:  # noqa: BLE001
+                print(f"[hoopstar-cv] job {job_id} chunk {chunk_index}: failed to report failure: {cb_exc}")
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        download_path = tmp_dir / "input.mp4"
+        print(f"[hoopstar-cv] job {job_id} chunk {chunk_index}: downloading video")
+        try:
+            urllib.request.urlretrieve(video_url, download_path)  # noqa: S310
+        except Exception as exc:  # noqa: BLE001
+            report_failure(f"Could not download video: {exc}")
+            raise
+
+        source_codec = probe_codec(download_path)
+        print(f"[hoopstar-cv] job {job_id} chunk {chunk_index}: codec={source_codec or 'unknown'}, normalizing")
+        try:
+            video_path = normalize_video(download_path)
+        except Exception as exc:  # noqa: BLE001
+            report_failure(f"Could not normalize video: {exc}")
+            raise
+
+        # Chunk 0 probes total_frames and reports to the API so progress_percent
+        # becomes real immediately without waiting for any chunk to complete.
+        if chunk_index == 0:
+            try:
+                import supervision as sv
+                info = sv.VideoInfo.from_video_path(str(video_path))
+                if info.total_frames:
+                    body = json.dumps({"total_frames": info.total_frames}).encode()
+                    total_frames_url = status_url.rsplit("/", 1)[0] + "/total-frames"
+                    _signed_post(total_frames_url, body)
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort; never abort a chunk over this.
+
+        batches_sent = 0
+        try:
+            for batch in run_pipeline(
+                str(video_path),
+                detector=self.detector,
+                ocr=self.ocr,
+                predictor=self.predictor,
+                team_classifier=self.team_classifier,
+                batch_size=30,
+                frame_stride=frame_stride,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                track_id_offset=track_id_offset,
+                source="modal",
+            ):
+                post_batch(batch)
+                batches_sent += 1
+                print(
+                    f"[hoopstar-cv] job {job_id} chunk {chunk_index}: "
+                    f"sent batch {batches_sent} ({len(batch.frames)} frames, final={batch.final_batch})"
+                )
+        except Exception as exc:  # noqa: BLE001
+            report_failure(f"Processing failed: {exc}")
+            raise
+
+        print(f"[hoopstar-cv] job {job_id} chunk {chunk_index}: done, {batches_sent} batches sent")
+        return {"job_id": job_id, "chunk_index": chunk_index, "batches_sent": batches_sent}
 
 
 @app.local_entrypoint()

@@ -36,6 +36,19 @@ class Settings(BaseSettings):
     modal_app_name: str = "hoopstar-cv"
     modal_cls_name: str = "BasketballModels"
 
+    # Temporal subsampling: process every Nth source frame on the GPU worker.
+    # Stride 3 over a 30fps clip ≈ 10 effective fps — the biggest throughput
+    # lever. Reported frame numbers/timestamps stay mapped to real source frames,
+    # so downstream timing is unaffected. Set 1 to process every frame.
+    cv_frame_stride: int = 3
+
+    # Chunked parallel processing: split a video into this many time-segments
+    # and process each on its own Modal GPU worker simultaneously. Wall-clock
+    # time drops roughly proportionally to chunk_count. Default 6 gives ~5-min
+    # segments for a 30-min game on A10G, targeting <=20 min wall-clock.
+    # Set 1 to use the legacy single-worker path (useful for short test clips).
+    cv_chunk_count: int = 6
+
     # Public base URL FastAPI is reachable at FROM Modal (e.g. an ngrok tunnel in
     # dev, or the real domain in prod). Modal POSTs detection batches to
     # ``{webhook_base_url}/api/videos/{job_id}/colab-detections``.

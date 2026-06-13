@@ -138,12 +138,16 @@ def _fit_team_classifier(
     *,
     stride: int,
     max_crops: int,
+    start_frame: int = 0,
+    end_frame: int | None = None,
 ) -> None:
     """Fit the SigLIP team classifier once on stride-sampled player crops."""
     import supervision as sv
 
     crops: list[np.ndarray] = []
-    for frame in sv.get_video_frames_generator(source_path=video_path, stride=stride):
+    for frame in sv.get_video_frames_generator(
+        source_path=video_path, stride=stride, start=start_frame, end=end_frame
+    ):
         detections = _detect_players(detector, frame)
         crops.extend(_central_crops(frame, detections))
         if len(crops) >= max_crops:
@@ -164,6 +168,10 @@ def process_video(
     team_classifier: Any,
     batch_size: int = 30,
     ocr_interval: int = 5,
+    frame_stride: int = 1,
+    start_frame: int = 0,
+    end_frame: int | None = None,
+    track_id_offset: int = 0,
     team_fit_stride: int = 30,
     team_fit_max_crops: int = 200,
     max_frames: int | None = None,
@@ -175,9 +183,22 @@ def process_video(
     Yields one batch every ``batch_size`` processed frames, plus a final batch
     flagged ``final_batch=True``. Team IDs are assigned once on the first frame
     and reused per ``tracker_id``; jersey numbers are validated across time and
-    OCR is only run every ``ocr_interval`` frames to save GPU. ``max_frames``
-    caps how many frames are processed (used to keep smoke tests fast).
+    OCR is only run every ``ocr_interval`` *processed* frames to save GPU.
+
+    ``frame_stride`` is the temporal subsampling factor: only every Nth source
+    frame is processed (stride 3 over a 30fps clip ≈ 10 effective fps). This is
+    the single biggest throughput lever — detection density for highlights does
+    not need every frame. ``frame_number``/``timestamp_sec`` are always reported
+    against the REAL source frame index, so downstream timing stays correct
+    regardless of stride.
+
+    ``start_frame``/``end_frame`` bound the time-segment this worker owns —
+    used for chunked parallel processing. ``track_id_offset`` shifts all SAM-2
+    tracker IDs by a fixed amount so chunks never collide in the DB.
+    ``max_frames`` caps how many processed frames are emitted (smoke tests).
     """
+    frame_stride = max(1, int(frame_stride))
+    track_id_offset = max(0, int(track_id_offset))
     import supervision as sv
     from sports import ConsecutiveValueTracker
 
@@ -191,6 +212,8 @@ def process_video(
         team_classifier,
         stride=team_fit_stride,
         max_crops=team_fit_max_crops,
+        start_frame=start_frame,
+        end_frame=end_frame,
     )
 
     tracker = SAM2Tracker(predictor)
@@ -205,7 +228,14 @@ def process_video(
     processed = 0
     seeded = False
 
-    for index, frame in enumerate(sv.get_video_frames_generator(source_path=video_path)):
+    for strided_index, frame in enumerate(
+        sv.get_video_frames_generator(
+            source_path=video_path, stride=frame_stride, start=start_frame, end=end_frame
+        )
+    ):
+        # Report against the REAL source frame index so timestamps/frame numbers
+        # are independent of the subsampling stride.
+        index = start_frame + strided_index * frame_stride
         frame_h, frame_w = frame.shape[:2]
 
         if not seeded:
@@ -231,7 +261,7 @@ def process_video(
                     )
                     frames = []
                 continue
-            seed.tracker_id = np.arange(1, len(seed.class_id) + 1)
+            seed.tracker_id = np.arange(1, len(seed.class_id) + 1) + track_id_offset
             crops = _central_crops(frame, seed)
             teams = np.array(team_classifier.predict(crops))
             for tid, team_id in zip(seed.tracker_id, teams):
@@ -248,7 +278,8 @@ def process_video(
         player_detections = tracker.propagate(frame)
 
         # Periodically run RF-DETR for jersey numbers + fresh action classes.
-        if index % ocr_interval == 0:
+        # Cadence is measured in PROCESSED frames so it is stride-independent.
+        if strided_index % ocr_interval == 0:
             result = detector.infer(
                 frame,
                 confidence=PLAYER_DETECTION_MODEL_CONFIDENCE,

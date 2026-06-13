@@ -21,6 +21,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: starhoop-api
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +33,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ${USERPROFILE}/.modal.toml:/root/.modal.toml:ro
       - ./uploads/videos:/app/uploads/videos
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 

@@ -82,6 +82,19 @@ class JobStatusUpdate(BaseModel):
 
     status: str
     error_message: str | None = None
+    chunk_index: int | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class TotalFramesUpdate(BaseModel):
+    """Worker-reported total source frame count (sent once by chunk 0).
+
+    Enables real ``progress_percent`` reporting from the first batch onward.
+    """
+
+    total_frames: int
 
     class Config:
         extra = "forbid"

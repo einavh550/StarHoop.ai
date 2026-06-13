@@ -9,6 +9,19 @@ from app.db.models.video_job import VideoJob
 from app.db.session import get_db
 
 
+class _FakeQuery:
+    """Minimal chainable query stub used by _FakeDB.query()."""
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def all(self):
+        return []
+
+    def first(self):
+        return None
+
+
 class _FakeDB:
     def __init__(self, team_exists: bool = True) -> None:
         self.team_exists = team_exists
@@ -31,6 +44,10 @@ class _FakeDB:
             obj.id = self.next_job_id
             self.next_job_id += 1
             self.jobs[obj.id] = obj
+
+    def query(self, *_args, **_kwargs):
+        """Stub for SQLAlchemy query — returns an empty chainable result."""
+        return _FakeQuery()
 
     def commit(self):
         return None

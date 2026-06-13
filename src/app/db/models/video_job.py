@@ -30,6 +30,10 @@ class VideoJob(Base):
     model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="yolov8n")
     total_frames: Mapped[int | None] = mapped_column(Integer, nullable=True)
     processed_frames: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Chunked parallel processing: set at spawn time. chunks_done is incremented
+    # by each chunk's final_batch webhook; job reaches completed when equal.
+    chunks_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunks_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -43,3 +47,4 @@ class VideoJob(Base):
     detection_frames = relationship("DetectionFrame", back_populates="video_job", cascade="all, delete-orphan")
     jersey_detections = relationship("JerseyDetection", back_populates="video_job", cascade="all, delete-orphan")
     action_detections = relationship("ActionDetection", back_populates="video_job", cascade="all, delete-orphan")
+    chunks = relationship("VideoJobChunk", back_populates="video_job", cascade="all, delete-orphan")
