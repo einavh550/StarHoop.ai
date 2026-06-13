@@ -194,16 +194,15 @@ def _draw_track_overlay(
     track_color = _track_color(int(track_id))
     cv2.rectangle(frame, (x1, y1), (x2, y2), track_color, thickness=2)
 
-    left_label = format_player_label(player, jersey if player is None else player.jersey_number)
-    right_label = format_ocr_label(jersey)
+    label = format_player_label(player, jersey if player is None else player.jersey_number)
 
-    label_y = max(0, y1 - 34)
-    left_text_width = cv2.getTextSize(left_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-    left_x = max(0, x1 - left_text_width - 18)
-    right_x = min(frame.shape[1] - 1, x2 + 10)
+    text_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
+    chip_width = text_width + 12
+    box_center_x = (x1 + x2) // 2
+    label_x = max(0, min(box_center_x - chip_width // 2, frame.shape[1] - 1 - chip_width))
+    label_y = max(0, y1 - 24)
 
-    _draw_text_chip(frame, cv2, left_label, left_x, label_y, (33, 37, 41))
-    _draw_text_chip(frame, cv2, right_label, right_x, label_y, (46, 125, 50))
+    _draw_text_chip(frame, cv2, label, label_x, label_y, (33, 37, 41))
 
 
 @dataclass(frozen=True)
