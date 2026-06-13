@@ -66,9 +66,9 @@ class ActionRecognizer:
             for det in frame.detections_json:
                 track_id = det.get("track_id")
                 bbox = det.get("bbox") or {}
-                class_name = det.get("class_name")
+                class_name = (det.get("class_name") or "").lower()
 
-                if class_name != "person" or track_id is None:
+                if class_name not in {"person", "player"} or track_id is None:
                     continue
 
                 y1 = bbox.get("y1")
