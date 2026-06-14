@@ -1,323 +1,183 @@
-﻿# StarHoop.ai 🏀 — AI-Powered Basketball Analytics for Youth Coaches
+git # StarHoop.ai
 
-**Status:** Milestones 1–4 complete and tested. Milestones 5–6 in progress.
+AI-powered basketball video analysis for coaches.
 
----
+Current status:
+- Milestones 1-5 complete and validated end-to-end.
+- Milestone 6 pending (polish/composition layer: intro cards, transitions, music, branding).
 
-## Overview
+## What The System Does
 
-**StarHoop.ai** is an AI-powered platform that automates basketball game analysis. Coaches upload a raw game video → the system automatically detects, tracks, and identifies every player by jersey number and team → coaches get structured, queryable game data with player stats, shots, and actions.
+1. Upload a game video.
+2. Run CV pipeline (detection, tracking, team classification, jersey mapping).
+3. Persist structured detections/actions in PostgreSQL.
+4. Generate:
+- Annotated full-video export.
+- Highlight reels (master all-players reel and optional per-player reel).
 
-**Tech Stack:**
-- **Backend:** FastAPI (Python) + PostgreSQL + SQLAlchemy ORM
-- **GPU Inference:** Modal serverless (RF-DETR, SAM-2, SigLIP, SmolVLM2)
-- **Storage:** Cloudflare R2 (S3-compatible)
-- **Containerization:** Docker + Docker Compose
-- **Mobile Frontend:** Android (Kotlin) — coming later
+## Tech Stack
 
----
+- Backend: FastAPI + SQLAlchemy + Alembic
+- Database: PostgreSQL
+- CV/Inference: Modal GPU workers (RF-DETR, SAM-2, SigLIP, SmolVLM2)
+- Storage: Cloudflare R2 (S3-compatible)
+- Video processing: ffmpeg
+- Local orchestration: Docker Compose
 
-## Project Structure
+## Milestones
 
-```
-StarHoop.ai/
-├── src/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app entry point
-│   │   ├── models/              # SQLAlchemy ORM models (VideoJob, DetectionFrame, etc.)
-│   │   ├── schemas/             # Pydantic validation schemas
-│   │   ├── routes/              # API endpoints (upload, status, results)
-│   │   ├── cv/                  # Computer vision pipeline
-│   │   │   ├── actions.py       # Action recognition (shot detection)
-│   │   │   ├── annotated_export.py  # Render annotated MP4s with labels/boxes
-│   │   │   ├── mapping.py       # Jersey → player name mapping
-│   │   │   └── ...
-│   │   └── database.py          # Session management, DB connection
-│   ├── migrations/              # Alembic DB schema versions
-│   └── requirements.txt         # Python dependencies
-├── modal_app/
-│   └── cv_app.py                # Modal app definition (GPU compute image + entry points)
-├── docs/
-│   ├── POSTER_CONTENT.md        # Project poster/pitch content
-│   └── SCHEMA_DIAGRAM.md        # Database schema details
-├── docker-compose.yml           # PostgreSQL + API service definitions
-├── .env                         # Environment config (DATABASE_URL, R2, Modal, ngrok, etc.)
-├── Dockerfile                   # API service container definition
-└── README.md                    # This file
-```
+### Milestone 1-4 (Complete)
 
----
+- Detection, tracking, team classification, jersey OCR mapping.
+- Action detection endpoint for auto shot-attempt extraction.
+- Annotated full-video export.
 
-## Milestones Implemented & Tested (1–4)
+### Milestone 5 (Complete)
 
-### ✅ Milestone 1: Object Detection (RF-DETR)
-- Detects players, ball, rim, jersey numbers, and special actions (jump shot, layup/dunk, shot-block).
-- Runs on Modal GPU (A10G).
-- **Output:** Per-frame bounding boxes with class names, confidences, and center coordinates.
-- **Status:** Tested on job 16 with 5,560 frames; 12K+ player detections collected.
+- Highlight event derivation from action + frame-level signals.
+- Clip extraction and reel stitching via ffmpeg.
+- New persistence tables:
+- highlight_reels
+- highlight_clips
+- Hybrid output model:
+- Master reel (all events, all players).
+- Optional minimal per-player reel from same pipeline.
+- Annotated source support for highlights:
+- source=clean: no overlays.
+- source=annotated: overlays present.
+- Single-player annotated mode:
+- For per-player + source=annotated, only the selected player is boxed/labeled.
+- Other players remain unannotated.
 
-### ✅ Milestone 2: Real-Time Tracking (SAM-2)
-- Propagates player masks and persistent track IDs across all frames using SAM-2 (Meta's real-time segmentation).
-- Initialized from RF-DETR detections on frame 1, then tracked.
-- **Output:** Per-track identity (track_id → player) and masks.
-- **Status:** Tested; 27 unique tracks identified across job 16 (all mapped to roster).
+### Milestone 6 (Pending)
 
-### ✅ Milestone 3: Team Classification (SigLIP + UMAP + K-Means)
-- Embeds each player crop using SigLIP (vision-language model).
-- Clusters into two teams using UMAP → K-Means.
-- **Output:** Team assignment per track (team_a or team_b).
-- **Status:** Tested; all 27 players assigned to teams with consistent colors/labels.
+Planned: professional composition layer on top of per-player reels (intro cards, overlays, transitions, music, branding).
 
-### ✅ Milestone 4: Jersey OCR & Player Identity Mapping
-- Extracts jersey number from each player using SmolVLM2 (small vision language model).
-- Maps number + team → player name via roster lookup.
-- Consecutive-frame agreement validation: jersey only accepted after 5+ consecutive reads.
-- **Output:** Per-track mapping: (track_id, jersey_number, player_name).
-- **Status:** Tested; all 27 mapped to roster players in job 16.
+## API Endpoints
 
-**Additional M4 Features (added in this session):**
-- **Annotated Video Export:** Renders MP4 with centered player labels ("Player Name #XX") and smooth bounding boxes.
-- **Temporal Box Interpolation:** Bridges detection gaps (up to 0.5s) with linear interpolation, ensuring smooth box motion across frame stride boundaries.
-- **Jersey Voting:** Aggregates per-track jersey OCR detections via `PlayerMapper.aggregate_jerseys_from_video()` for stable identity assignment.
-- **Action Recognition (Shot Detection):** Detects shooting actions via center_y trajectory analysis (jump arc detection). **Fixed bug in M4:** class_name filter now accepts both "person" and "player" instead of just "person".
+### Health
 
----
+- GET /health/
 
-## Milestones Pending (5–6)
+### Video jobs
 
-### 📋 Milestone 5: Highlight Clip Extraction & Stitching
-**Goal:** Auto-extract relevant clips (shots, possessions, actions) and stitch them into a coach-friendly highlight reel.
+- POST /api/videos/upload
+- GET /api/videos/{job_id}
+- GET /api/videos/{job_id}/results
 
-**Scope:**
-- Extract clips around detected actions (shots, layups, dunks, blocks).
-- Rank clips by game intensity (made vs. missed, player importance, game context).
-- Stitch into a single MP4 (with or without basic transitions).
-- Include per-clip metadata (player, action type, timestamp).
+### Actions
 
-**Entry Point:** `POST /api/videos/{job_id}/highlights/extract`
+- POST /api/videos/{job_id}/actions/auto
 
-**Dependencies:** Milestones 1–4 (need action detection + player identity).
+### Annotated exports
 
-### 📋 Milestone 6: Professional Graphics & Music
-**Goal:** Layer professional overlays, music, and analytics onto the highlight reel.
+- POST /api/videos/{job_id}/exports/annotated
+- GET /api/videos/{job_id}/exports/annotated/{export_id}
+- GET /api/videos/{job_id}/exports/annotated/{export_id}/download
 
-**Scope:**
-- Animated score ticker, game clock, possession counter.
-- Per-player stats overlay (points, rebounds, assists, FG%).
-- Licensed background music synced to highlight pacing.
-- Watermark / branding.
-- Optional: slow-motion on key moments.
+### Highlights (M5)
 
-**Entry Point:** `POST /api/videos/{job_id}/highlights/pro-graphics`
+- POST /api/videos/{job_id}/highlights/extract
+Query params:
+- source=clean|annotated
+- player_id optional
+- max_clips optional
+- min_confidence optional
+- event_types optional
+- pad_pre_sec optional
+- pad_post_sec optional
 
-**Dependencies:** Milestone 5 (needs extracted clips + metadata).
+- GET /api/videos/{job_id}/highlights/{reel_id}
+- GET /api/videos/{job_id}/highlights/{reel_id}/download
+- GET /api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download
 
----
+## Local Setup
 
-## API Endpoints (Live)
+Prerequisites:
+- Docker Desktop
+- Python 3.12 + virtualenv
 
-| Method | Endpoint | Purpose | Status |
-|--------|----------|---------|--------|
-| `POST` | `/api/videos/upload` | Create a job, upload video to R2 | ✅ Live |
-| `GET` | `/api/videos/{job_id}` | Poll job status (progress_percent, throughput_fps) | ✅ Live |
-| `GET` | `/api/videos/{job_id}/results` | Retrieve detection results + jersey IDs | ✅ Live |
-| `POST` | `/api/videos/{job_id}/exports/annotated` | Generate annotated MP4 (RF-DETR boxes + labels) | ✅ Live |
-| `POST` | `/api/videos/{job_id}/actions/auto` | Run action recognizer (shot detection) | ✅ Live (bug fixed) |
-| `GET` | `/health` | Health check | ✅ Live |
-| `POST` | `/api/videos/{job_id}/results` (webhook) | Modal callback (internal) | ✅ Live |
+1. Install dependencies
 
----
-
-## Database Schema (PostgreSQL)
-
-**Key Tables:**
-
-- **video_jobs** — Metadata: status, frame count, throughput, remote_video_url, modal_call_id.
-- **detection_frames** — Per-frame detections (JSON: boxes, class_name, track_id, confidence).
-- **jersey_detections** — Aggregated jersey per track (detected_jersey_number, mapped_player_id, frame_count).
-- **action_detections** — Detected actions/shots (track_id, action_type, confidence, start_frame, end_frame, timestamps).
-- **players** — Roster (player_id, name, jersey_number, team_id).
-- **teams** — Team metadata (team_id, name, color_primary, color_secondary).
-- **coaches** — Coach accounts (email, auth info).
-
----
-
-## How It Works: Request Lifecycle
-
-1. **Coach uploads video** → `POST /api/videos/upload`
-2. **FastAPI stores** → Saves to Cloudflare R2, creates `VideoJob` record in DB.
-3. **FastAPI triggers Modal** → Sends job to Modal with callback URL (`WEBHOOK_BASE_URL`).
-4. **API returns instantly** → `202 Accepted` + `job_id`.
-5. **Modal downloads** → Fetches video from R2.
-6. **Modal runs pipeline** → RF-DETR → SAM-2 → SigLIP → SmolVLM2.
-7. **Modal posts results** → Webhook POST to `WEBHOOK_BASE_URL/api/videos/{job_id}/results` with HMAC signature.
-8. **FastAPI validates** → Verifies HMAC, persists detections to DB.
-9. **Coach polls** → `GET /api/videos/{job_id}` → Returns status + results.
-10. **Coach exports annotated video** → `POST /api/videos/{job_id}/exports/annotated` → Renders MP4 with labels.
-
----
-
-## Environment Configuration (.env)
-
-```env
-# PostgreSQL
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
-TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
-
-# Application
-APP_ENV=development
-
-# Modal orchestration (must be true for async jobs)
-ENABLE_MODAL_ORCHESTRATION=true
-MODAL_APP_NAME=hoopstar-cv
-MODAL_CLS_NAME=BasketballModels
-
-# ngrok URL (set after starting ngrok tunnel)
-WEBHOOK_BASE_URL=https://thrift-fraying-plentiful.ngrok-free
-
-# HMAC secret (shared with Modal for webhook verification)
-WEBHOOK_HMAC_SECRET=397badbdbc431ee6df66860c3bf208ed98cc972e8ff55e27bd21e9fadd8f8749
-
-# Cloudflare R2
-R2_ACCOUNT_ID=438151457eaf867d1972dc6ecad43919
-R2_ACCESS_KEY_ID=71c2d4426dea6bb858847be77b18203f
-R2_SECRET_ACCESS_KEY=69ded373753b4ee57fce057fcdcd9826a03bcf151acf247f9d4caf47da8b59de
-R2_BUCKET=hoopstar-ai
-R2_ENDPOINT_URL=
-R2_PRESIGN_EXPIRY_SEC=3600
+```powershell
+Set-Location "c:\Users\einav\OneDrive\Desktop\HoopStar.ai\StarHoop.ai"
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
----
+2. Configure environment
 
-## Recent Changes & Fixes (This Session)
+- Copy .env.example to .env and fill values.
+- Do not commit secrets.
 
-### 1. Fixed Action Recognition (class_name filter)
-- **Issue:** Action recognizer filtered `class_name != "person"` but CV pipeline outputs `class_name = "player"`.
-- **Fix:** Changed filter to `class_name not in {"person", "player"}` with `.lower()` normalization in `src/app/cv/actions.py`.
-- **Impact:** Action detection now works for job 16 (pending Docker rebuild + re-trigger).
+3. Run database + API container
 
-### 2. Annotated Video Export with Centered Labels
-- **Feature:** Renders MP4 with player names + jersey numbers centered above bounding boxes.
-- **Implementation:** `src/app/cv/annotated_export.py` → `_draw_track_overlay()` draws single centered label instead of dual side labels.
-- **Status:** Tested on job 16; 161 MB valid MP4 generated.
-
-### 3. Temporal Box Interpolation
-- **Feature:** Bridges bounding box detection gaps (up to 0.5s) with linear interpolation.
-- **Why:** CV pipeline uses frame stride=3 (processes every 3rd frame); gaps cause jumpy boxes.
-- **Implementation:** `_build_interpolated_boxes()` in `annotated_export.py` → carries interpolation 0.15s into future.
-- **Status:** Tested; smooth box motion confirmed in job 16 export.
-
-### 4. Jersey Voting & Roster Mapping
-- **Feature:** Aggregates per-track jersey detections via consecutive-frame agreement.
-- **Implementation:** `PlayerMapper.aggregate_jerseys_from_video()` → votes per jersey across frames → maps to roster player.
-- **Status:** All 27 tracks in job 16 mapped to roster.
-
----
-
-## Test Data & Validation
-
-**Job 16 (validation dataset):**
-- **Frames:** 5,560 (stride=3 from source)
-- **Detections:** 12,118 player boxes
-- **Tracks:** 27 unique players
-- **Actions detected:** 0 (before fix), pending re-detection after Docker rebuild
-- **Export:** 161 MB annotated MP4 with centered labels + smooth boxes
-
-**Verified outputs:**
-- ✅ RF-DETR detections (all classes)
-- ✅ SAM-2 tracking (27 persistent IDs)
-- ✅ SigLIP team classification (2 teams, consistent colors)
-- ✅ SmolVLM2 jersey OCR (all 27 mapped to roster)
-- ✅ Annotated export (centered labels, interpolated boxes)
-- ✅ Action recognition filter (fixed class_name bug)
-
----
-
-## Development Workflow
-
-### Quick Commands
-See [STARTUP_GUIDE.md](STARTUP_GUIDE.md) for full terminal-by-terminal startup sequence.
-
-```bash
-# Start Docker (PostgreSQL + API container)
+```powershell
 docker compose up -d
-
-# Start FastAPI (with auto-reload) — Terminal 2
-cd src
-PYTHONPATH=. python -m uvicorn app.main:app --reload --port 8000
-
-# Start ngrok tunnel — Terminal 3
-ngrok http 8000
-
-# Update .env with ngrok URL after starting ngrok
 ```
 
-### Testing the Pipeline
-```bash
-# Health check
-curl http://localhost:8000/health
+4. Run migrations
 
-# Upload a video
-curl -X POST \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@game.mp4" \
-  -F "team_id=1" \
-  http://localhost:8000/api/videos/upload
-
-# Poll status
-curl http://localhost:8000/api/videos/{job_id}
-
-# Export annotated video
-curl -X POST http://localhost:8000/api/videos/{job_id}/exports/annotated
-
-# Detect actions
-curl -X POST http://localhost:8000/api/videos/{job_id}/actions/auto
+```powershell
+$env:PYTHONPATH='src'
+python -m alembic upgrade head
 ```
 
----
+5. Verify health
 
-## Key Architectural Decisions
+```powershell
+iwr http://localhost:8000/health/ -UseBasicParsing
+```
 
-| Decision | Rationale |
-|----------|-----------|
-| **Modal for GPU** | Serverless = no idle costs. Scales automatically. Reproducible Docker images. |
-| **Cloudflare R2** | S3-compatible, fast downloads from Modal US-regions. Cheaper than AWS S3. |
-| **FastAPI** | Async-first, great webhook support, auto-generated API docs. |
-| **PostgreSQL** | ACID compliance, JSON column support (for detections), mature ecosystem. |
-| **Docker Compose locally** | Reproduces production DB locally. Easy to reset with `docker compose down -v`. |
-| **Frame stride=3** | Balances accuracy vs. throughput. 30 FPS → 10 FPS effective (less compute). |
-| **SAM-2 (real-time)** | Fast, accurate masks. Maintains track consistency across frames. |
-| **SigLIP + K-Means** | Lightweight team classification. Avoids heavyweight segmentation models. |
-| **SmolVLM2 for OCR** | Efficient jersey number reading. Works on GPU without heavy fine-tuning. |
+Expected content:
+- {"status":"ok","database":"connected"}
 
----
+## M5 Quick Validation
 
-## Known Limitations & TODOs
+Example using job 16:
 
-- **M5/M6 not started:** Clip extraction, stitching, pro graphics pending.
-- **No made/missed shot detection yet:** Action recognizer only detects attempt (not outcome).
-- **No possession tracking:** Derived from action detections in M6 planning.
-- **No live streaming:** System is async (upload → process → results).
-- **Limited jersey confidence filtering:** Basic consecutive-frame agreement; could improve with confidence-weighted voting.
-- **No multi-angle support:** Single camera assumed.
+1. Generate actions
 
----
+```powershell
+$actions = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/actions/auto?min_confidence=0.6&max_actions=200"
+$actions
+```
 
-## Contributing & Code Style
+2. Generate master reel
 
-- **Python:** 3.12, FastAPI conventions, SQLAlchemy ORM.
-- **Database:** Alembic migrations (no raw SQL).
-- **Formatting:** Black (auto-format) + Pylint.
-- **Testing:** Pytest (not yet implemented; to-do).
+```powershell
+$master = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=clean"
+$master
+```
 
----
+3. Generate boxed single-player reel (example player_id=1)
 
-## Contact & License
+```powershell
+$player = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=annotated&player_id=1"
+$player
+```
 
-- **Created:** June 2026
-- **Repo:** GitHub (link)
-- **License:** (MIT/Apache/proprietary — fill in)
+4. Download reel
 
----
+```powershell
+Invoke-WebRequest -Uri ("http://localhost:8000/api/videos/16/highlights/" + $player.reel_id + "/download") -OutFile "C:\Users\einav\OneDrive\Desktop\job16_player_boxed.mp4"
+```
 
-**Last updated:** June 14, 2026 — Milestones 1–4 complete, M5–M6 planning phase.
+## Data Model (Core)
+
+- video_jobs: upload/process lifecycle.
+- detection_frames: frame-level detections JSON.
+- jersey_detections: aggregated jersey mapping by track.
+- action_detections: detected actions and timing windows.
+- highlight_reels: stitched output artifacts.
+- highlight_clips: per-clip metadata/artifacts.
+
+## Notes
+
+- For source=annotated and player_id set, highlights use a player-targeted annotated source render.
+- This keeps only the selected player boxed in the final per-player reel.
+- Master annotated reels keep normal all-player annotation behavior.
+
+## License
+
+Set your intended license in this section (MIT, Apache-2.0, or proprietary).
