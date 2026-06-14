@@ -25,6 +25,18 @@ class Settings(BaseSettings):
     annotated_export_dir: str = "uploads/annotated_exports"
     allowed_video_extensions: str = ".mp4,.mov,.avi,.mkv"
 
+    # --- Milestone 5: highlight clip extraction & stitching ---------------
+    # Where rendered highlight reels and their per-event clips are written.
+    highlight_export_dir: str = "uploads/highlights"
+    # Seconds of context added before/after each derived event window.
+    highlight_pad_pre_sec: float = 2.0
+    highlight_pad_post_sec: float = 2.0
+    # Upper bound on clips per reel (after ranking) to keep reels watchable.
+    highlight_max_clips: int = 20
+    # A shot/layup is flagged "made" if a ball-in-basket detection lands within
+    # this many seconds after the event ends.
+    highlight_made_shot_window_sec: float = 1.5
+
     # --- Milestone 4: Modal orchestration ---------------------------------
     # When enabled, /upload mirrors the saved video to Cloudflare R2 and spawns
     # the deployed Modal job to process it on GPU. When disabled (default), the

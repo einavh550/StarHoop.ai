@@ -181,3 +181,43 @@ class ActionDetectionResponse(BaseModel):
     medium_confidence_count: int
     low_confidence_count: int
     actions: list[ActionDetectionSuggestion] = Field(default_factory=list)
+
+
+class HighlightClipResponse(BaseModel):
+    clip_id: int
+    order_index: int
+    event_type: str
+    source: str
+    track_id: int | None = None
+    mapped_player_id: int | None = None
+    start_frame: int
+    end_frame: int
+    start_timestamp_sec: float
+    end_timestamp_sec: float
+    made: bool | None = None
+    score: float
+    confidence: float
+    clip_filename: str | None = None
+    download_url: str | None = None
+
+
+class HighlightReelResponse(BaseModel):
+    reel_id: int
+    job_id: int
+    team_id: int
+    status: str
+    scope: str
+    source_mode: str
+    player_id: int | None = None
+    clip_count: int
+    total_duration_sec: float
+    output_filename: str | None = None
+    download_url: str | None = None
+    created_at: datetime
+    clips: list[HighlightClipResponse] = Field(default_factory=list)
+
+
+class HighlightReelStatusResponse(HighlightReelResponse):
+    file_size_bytes: int | None = None
+    error_message: str | None = None
+

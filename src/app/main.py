@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes.exports import router as exports_router
+from app.api.routes.highlights import router as highlights_router
 from app.api.routes.mapping_diagnostics import router as mapping_diagnostics_router
 from app.api.routes.actions import router as actions_router
 from app.api.routes.health import router as health_router
@@ -16,6 +17,7 @@ def create_app() -> FastAPI:
     app.include_router(mapping_diagnostics_router)
     app.include_router(exports_router)
     app.include_router(actions_router)
+    app.include_router(highlights_router)
     return app
 
 

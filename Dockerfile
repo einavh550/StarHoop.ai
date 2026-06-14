@@ -14,6 +14,7 @@ RUN apt-get update \
         gcc \
         g++ \
         python3-dev \
+        ffmpeg \
         libgl1 \
         libglib2.0-0 \
         libpq-dev \

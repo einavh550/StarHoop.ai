@@ -1,0 +1,68 @@
+"""Rank derived highlight events so the best moments lead the reel.
+
+Scoring is a transparent weighted sum: a base weight per event type, a bonus for
+confirmed made shots, and a smaller contribution from the detector confidence.
+Events are sorted by descending score and capped at ``max_clips``.
+"""
+
+from __future__ import annotations
+
+from app.cv.highlights.events import (
+    EVENT_LAYUP_DUNK,
+    EVENT_POSSESSION,
+    EVENT_SHOT_ATTEMPT,
+    EVENT_SHOT_BLOCK,
+    HighlightEvent,
+)
+
+# Base desirability per event type (dunk > block > shot > possession).
+EVENT_TYPE_WEIGHTS: dict[str, float] = {
+    EVENT_LAYUP_DUNK: 1.0,
+    EVENT_SHOT_BLOCK: 0.9,
+    EVENT_SHOT_ATTEMPT: 0.7,
+    EVENT_POSSESSION: 0.4,
+}
+_DEFAULT_WEIGHT = 0.5
+
+MADE_SHOT_BONUS = 0.5
+CONFIDENCE_WEIGHT = 0.3
+
+
+def score_event(event: HighlightEvent) -> float:
+    """Return the ranking score for a single event."""
+    base = EVENT_TYPE_WEIGHTS.get(event.event_type, _DEFAULT_WEIGHT)
+    made_bonus = MADE_SHOT_BONUS if event.made else 0.0
+    confidence_term = CONFIDENCE_WEIGHT * max(0.0, min(1.0, event.confidence))
+    return round(base + made_bonus + confidence_term, 4)
+
+
+def rank_events(
+    events: list[HighlightEvent],
+    *,
+    max_clips: int,
+    event_types: set[str] | None = None,
+    min_confidence: float = 0.0,
+) -> list[tuple[HighlightEvent, float]]:
+    """Filter, score and order events for the reel.
+
+    Args:
+        events: Candidate events (any order).
+        max_clips: Maximum number of clips to keep.
+        event_types: If provided, only these event types are kept.
+        min_confidence: Drop events below this detector confidence.
+
+    Returns:
+        ``(event, score)`` pairs sorted by descending score, then by start time
+        for stable, chronological tie-breaking. Length is capped at
+        ``max_clips``.
+    """
+    filtered = [
+        event
+        for event in events
+        if (event_types is None or event.event_type in event_types)
+        and event.confidence >= min_confidence
+    ]
+
+    scored = [(event, score_event(event)) for event in filtered]
+    scored.sort(key=lambda pair: (-pair[1], pair[0].start_timestamp_sec, pair[0].start_frame))
+    return scored[: max(0, max_clips)]

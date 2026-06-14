@@ -48,3 +48,4 @@ class VideoJob(Base):
     jersey_detections = relationship("JerseyDetection", back_populates="video_job", cascade="all, delete-orphan")
     action_detections = relationship("ActionDetection", back_populates="video_job", cascade="all, delete-orphan")
     chunks = relationship("VideoJobChunk", back_populates="video_job", cascade="all, delete-orphan")
+    highlight_reels = relationship("HighlightReel", back_populates="video_job", cascade="all, delete-orphan")
