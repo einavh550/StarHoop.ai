@@ -217,12 +217,29 @@ class AnnotatedExportResult:
     created_at: str
     total_frames: int | None
     rendered_frames: int
+    annotated_player_id: int | None = None
 
 
-def render_annotated_export(db: Session, job_id: int) -> AnnotatedExportResult:
+def render_annotated_export(
+    db: Session,
+    job_id: int,
+    *,
+    annotated_player_id: int | None = None,
+) -> AnnotatedExportResult:
     job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
     if job is None:
         raise ValueError(f"VideoJob {job_id} not found")
+
+    if annotated_player_id is not None:
+        target_player = (
+            db.query(Player)
+            .filter(Player.id == annotated_player_id, Player.team_id == job.team_id)
+            .first()
+        )
+        if target_player is None:
+            raise ValueError(
+                f"Player {annotated_player_id} not found on team {job.team_id} for job {job_id}"
+            )
 
     cv2 = _import_cv2_module()
 
@@ -274,6 +291,9 @@ def render_annotated_export(db: Session, job_id: int) -> AnnotatedExportResult:
             if track_boxes:
                 for track_id, box in track_boxes.items():
                     player, jersey = identity_by_track.get(track_id, (None, None))
+                    if annotated_player_id is not None:
+                        if player is None or player.id != annotated_player_id:
+                            continue
                     _draw_track_overlay(annotated_frame, cv2, track_id, box, player, jersey)
 
             writer.write(annotated_frame)
@@ -302,6 +322,7 @@ def render_annotated_export(db: Session, job_id: int) -> AnnotatedExportResult:
         "created_at": _utc_now_iso(),
         "total_frames": job.total_frames,
         "rendered_frames": rendered_frames,
+        "annotated_player_id": annotated_player_id,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -318,6 +339,7 @@ def render_annotated_export(db: Session, job_id: int) -> AnnotatedExportResult:
         created_at=metadata["created_at"],
         total_frames=job.total_frames,
         rendered_frames=rendered_frames,
+        annotated_player_id=annotated_player_id,
     )
 
 

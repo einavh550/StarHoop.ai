@@ -20,8 +20,10 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.cv.annotated_export import render_annotated_export
 from app.cv.highlights.clips import (
     ClipExtractionError,
+    SOURCE_ANNOTATED,
     SOURCE_CLEAN,
     extract_clip,
     resolve_source,
@@ -136,7 +138,15 @@ def generate_highlights(
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        source_path = resolve_source(db, job, source_mode)
+        if source_mode == SOURCE_ANNOTATED and player_id is not None:
+            # For per-player annotated reels, annotate ONLY the selected player.
+            source_path = render_annotated_export(
+                db,
+                video_job_id,
+                annotated_player_id=player_id,
+            ).output_path
+        else:
+            source_path = resolve_source(db, job, source_mode)
         source_duration = probe_duration(source_path)
 
         total_duration = 0.0
