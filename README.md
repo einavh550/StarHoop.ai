@@ -1,183 +1,259 @@
-git # StarHoop.ai
+# StarHoop.ai 🏀 — AI-Powered Basketball Analytics for Youth Coaches
 
-AI-powered basketball video analysis for coaches.
+**Status:** Milestones 1–5 complete and tested. Milestone 6 is the next implementation target.
 
-Current status:
-- Milestones 1-5 complete and validated end-to-end.
-- Milestone 6 pending (polish/composition layer: intro cards, transitions, music, branding).
+---
 
-## What The System Does
+## Overview
 
-1. Upload a game video.
-2. Run CV pipeline (detection, tracking, team classification, jersey mapping).
-3. Persist structured detections/actions in PostgreSQL.
-4. Generate:
-- Annotated full-video export.
-- Highlight reels (master all-players reel and optional per-player reel).
+**StarHoop.ai** is an AI-powered platform that automates basketball game analysis. Coaches upload a raw game video -> the system automatically detects, tracks, and identifies players by jersey number and team -> coaches receive structured, queryable game intelligence plus generated highlight media.
 
-## Tech Stack
+**Tech Stack:**
+- **Backend:** FastAPI (Python) + PostgreSQL + SQLAlchemy ORM
+- **GPU Inference:** Modal serverless (RF-DETR, SAM-2, SigLIP, SmolVLM2)
+- **Storage:** Cloudflare R2 (S3-compatible)
+- **Containerization:** Docker + Docker Compose
+- **Video Processing:** ffmpeg
+- **Mobile Frontend:** Android (Kotlin) — planned
 
-- Backend: FastAPI + SQLAlchemy + Alembic
-- Database: PostgreSQL
-- CV/Inference: Modal GPU workers (RF-DETR, SAM-2, SigLIP, SmolVLM2)
-- Storage: Cloudflare R2 (S3-compatible)
-- Video processing: ffmpeg
-- Local orchestration: Docker Compose
+---
 
-## Milestones
+## Project Structure
 
-### Milestone 1-4 (Complete)
+```
+StarHoop.ai/
+├── src/
+│   ├── app/
+│   │   ├── main.py              # FastAPI app entry point
+│   │   ├── db/models/           # SQLAlchemy ORM models (VideoJob, DetectionFrame, etc.)
+│   │   ├── api/routes/          # API endpoints
+│   │   ├── cv/                  # Computer vision + media pipeline
+│   │   │   ├── actions.py       # Action recognition
+│   │   │   ├── annotated_export.py  # Annotated full-video rendering
+│   │   │   ├── highlights/      # M5 clip extraction/stitching modules
+│   │   │   └── mapping.py       # Jersey -> player mapping
+│   │   └── core/                # Config/security/runtime helpers
+├── alembic/versions/            # DB schema versions
+├── modal_app/                   # Modal GPU app image + workers
+├── docker-compose.yml           # PostgreSQL + API services
+├── Dockerfile                   # API image (includes ffmpeg)
+├── STARTUP_GUIDE.md             # Boot sequence and ops commands
+└── README.md                    # This file
+```
 
-- Detection, tracking, team classification, jersey OCR mapping.
-- Action detection endpoint for auto shot-attempt extraction.
-- Annotated full-video export.
+---
 
-### Milestone 5 (Complete)
+## Milestones Implemented & Tested (1–5)
 
-- Highlight event derivation from action + frame-level signals.
+### ✅ Milestone 1: Object Detection (RF-DETR)
+- Detects players, ball, rim, jersey numbers, and key action classes.
+- Runs on Modal GPU.
+- **Output:** Per-frame detections with class names, confidences, boxes, and trackable entities.
+
+### ✅ Milestone 2: Real-Time Tracking (SAM-2)
+- Propagates masks and stable track IDs across frames.
+- Initialized from detector observations, then tracked through video.
+- **Output:** Persistent per-track identity and segmentation continuity.
+
+### ✅ Milestone 3: Team Classification (SigLIP + clustering)
+- Embeds player crops with SigLIP and assigns team clusters.
+- **Output:** Team assignment per track with consistent side labeling.
+
+### ✅ Milestone 4: Jersey OCR & Identity Mapping
+- Reads jersey numbers with SmolVLM2 and maps to roster players.
+- Includes aggregation and confidence gating for stability.
+- Added **annotated full-video export** with smooth interpolation and centered labels.
+
+### ✅ Milestone 5: Highlight Clip Extraction & Stitching
+**Goal achieved:** Auto-generate coach-ready highlight reels from derived game events.
+
+**Implemented scope:**
+- Event derivation from action detections + frame-level classes.
 - Clip extraction and reel stitching via ffmpeg.
-- New persistence tables:
-- highlight_reels
-- highlight_clips
+- Persistence layer for reels and clips:
+	- `highlight_reels`
+	- `highlight_clips`
 - Hybrid output model:
-- Master reel (all events, all players).
-- Optional minimal per-player reel from same pipeline.
-- Annotated source support for highlights:
-- source=clean: no overlays.
-- source=annotated: overlays present.
-- Single-player annotated mode:
-- For per-player + source=annotated, only the selected player is boxed/labeled.
-- Other players remain unannotated.
+	- Master reel (all events, all players)
+	- Optional minimal per-player reel (same pipeline, filtered by player)
+- Source modes for extraction:
+	- `source=clean` (raw source video)
+	- `source=annotated` (overlay source)
+- **Single-player annotation behavior (implemented):**
+	- For per-player reels with `source=annotated`, only the selected player is boxed/labeled.
+	- All other players remain unannotated.
 
-### Milestone 6 (Pending)
+**Primary entry point:** `POST /api/videos/{job_id}/highlights/extract`
 
-Planned: professional composition layer on top of per-player reels (intro cards, overlays, transitions, music, branding).
+---
 
-## API Endpoints
+## Milestone 6 (Next): Professional Personalized Reel Composition
 
-### Health
+**Goal:** Turn M5 raw per-player reels into polished, share-ready highlight products.
 
-- GET /health/
+**Planned implementation scope:**
+- Intro/title card with player identity and game metadata.
+- Rich overlays (player name/number, event chips, optional stats bar).
+- Visual composition polish (timed transitions and pacing).
+- Music bed integration (with safe level control/ducking).
+- Branding/watermark package and export profiles.
 
-### Video jobs
+**Design boundary:**
+- Filtering and event selection remain in M5.
+- M6 focuses on presentation/composition quality on top of M5 outputs.
 
-- POST /api/videos/upload
-- GET /api/videos/{job_id}
-- GET /api/videos/{job_id}/results
+---
 
-### Actions
+## API Endpoints (Live)
 
-- POST /api/videos/{job_id}/actions/auto
+| Method | Endpoint | Purpose | Status |
+|--------|----------|---------|--------|
+| `POST` | `/api/videos/upload` | Create job and upload video | ✅ Live |
+| `GET` | `/api/videos/{job_id}` | Poll job status/progress | ✅ Live |
+| `GET` | `/api/videos/{job_id}/results` | Retrieve structured detections | ✅ Live |
+| `POST` | `/api/videos/{job_id}/exports/annotated` | Generate annotated full MP4 | ✅ Live |
+| `GET` | `/api/videos/{job_id}/exports/annotated/{export_id}` | Annotated export status | ✅ Live |
+| `GET` | `/api/videos/{job_id}/exports/annotated/{export_id}/download` | Download annotated MP4 | ✅ Live |
+| `POST` | `/api/videos/{job_id}/actions/auto` | Run action recognizer | ✅ Live |
+| `POST` | `/api/videos/{job_id}/highlights/extract` | Create M5 highlight reel | ✅ Live |
+| `GET` | `/api/videos/{job_id}/highlights/{reel_id}` | Reel metadata/status | ✅ Live |
+| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/download` | Download stitched reel | ✅ Live |
+| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download` | Download single clip | ✅ Live |
+| `GET` | `/health/` | Health check | ✅ Live |
 
-### Annotated exports
+---
 
-- POST /api/videos/{job_id}/exports/annotated
-- GET /api/videos/{job_id}/exports/annotated/{export_id}
-- GET /api/videos/{job_id}/exports/annotated/{export_id}/download
+## Database Schema (PostgreSQL)
 
-### Highlights (M5)
+**Core tables:**
+- **video_jobs** — Job lifecycle, status, frame/progress metrics.
+- **detection_frames** — Per-frame detections JSON.
+- **jersey_detections** — Aggregated jersey mapping by track.
+- **action_detections** — Action windows and confidence.
+- **players / teams / coaches** — Roster and organization entities.
 
-- POST /api/videos/{job_id}/highlights/extract
-Query params:
-- source=clean|annotated
-- player_id optional
-- max_clips optional
-- min_confidence optional
-- event_types optional
-- pad_pre_sec optional
-- pad_post_sec optional
+**M5 tables:**
+- **highlight_reels** — Reel artifacts (`scope`, `player_id`, output metadata).
+- **highlight_clips** — Per-clip event metadata and clip artifact paths.
 
-- GET /api/videos/{job_id}/highlights/{reel_id}
-- GET /api/videos/{job_id}/highlights/{reel_id}/download
-- GET /api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download
+---
 
-## Local Setup
+## How It Works: Request Lifecycle
 
-Prerequisites:
-- Docker Desktop
-- Python 3.12 + virtualenv
+1. Coach uploads video via `POST /api/videos/upload`.
+2. FastAPI persists a `video_jobs` row and stores source media.
+3. Modal worker processes detection/tracking/classification/OCR.
+4. Webhook writes structured frame and identity outputs to PostgreSQL.
+5. Coach can export annotated full video.
+6. Coach can trigger action recognition.
+7. Coach triggers M5 highlights extraction (master or per-player).
+8. System extracts/stitches clips and persists reel + clip artifacts.
+9. Coach downloads final reel or individual clips.
 
-1. Install dependencies
+---
 
-```powershell
-Set-Location "c:\Users\einav\OneDrive\Desktop\HoopStar.ai\StarHoop.ai"
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+## Environment Configuration (.env)
+
+Use `.env.example` as the source template and provide environment-specific values.
+
+```env
+# PostgreSQL
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
+TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
+
+# App
+APP_ENV=development
+
+# Modal orchestration
+ENABLE_MODAL_ORCHESTRATION=true
+MODAL_APP_NAME=hoopstar-cv
+MODAL_CLS_NAME=BasketballModels
+
+# Webhook
+WEBHOOK_BASE_URL=https://<your-ngrok-or-domain>
+WEBHOOK_HMAC_SECRET=<shared-secret>
+
+# Cloudflare R2
+R2_ACCOUNT_ID=<account>
+R2_ACCESS_KEY_ID=<key>
+R2_SECRET_ACCESS_KEY=<secret>
+R2_BUCKET=<bucket>
+R2_ENDPOINT_URL=
+R2_PRESIGN_EXPIRY_SEC=3600
 ```
 
-2. Configure environment
+---
 
-- Copy .env.example to .env and fill values.
-- Do not commit secrets.
+## Development Workflow
 
-3. Run database + API container
+See `STARTUP_GUIDE.md` for full terminal-by-terminal startup flow.
 
-```powershell
+```bash
+# Start services
 docker compose up -d
+
+# Run migrations
+PYTHONPATH=src python -m alembic upgrade head
+
+# Health
+curl http://localhost:8000/health/
 ```
 
-4. Run migrations
+### M5 Validation Quick Path (job 16 example)
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m alembic upgrade head
-```
-
-5. Verify health
-
-```powershell
-iwr http://localhost:8000/health/ -UseBasicParsing
-```
-
-Expected content:
-- {"status":"ok","database":"connected"}
-
-## M5 Quick Validation
-
-Example using job 16:
-
-1. Generate actions
-
-```powershell
+# 1) actions
 $actions = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/actions/auto?min_confidence=0.6&max_actions=200"
-$actions
-```
 
-2. Generate master reel
-
-```powershell
+# 2) master reel
 $master = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=clean"
-$master
-```
 
-3. Generate boxed single-player reel (example player_id=1)
-
-```powershell
+# 3) boxed single-player reel
 $player = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=annotated&player_id=1"
-$player
-```
 
-4. Download reel
-
-```powershell
+# 4) download
 Invoke-WebRequest -Uri ("http://localhost:8000/api/videos/16/highlights/" + $player.reel_id + "/download") -OutFile "C:\Users\einav\OneDrive\Desktop\job16_player_boxed.mp4"
 ```
 
-## Data Model (Core)
+---
 
-- video_jobs: upload/process lifecycle.
-- detection_frames: frame-level detections JSON.
-- jersey_detections: aggregated jersey mapping by track.
-- action_detections: detected actions and timing windows.
-- highlight_reels: stitched output artifacts.
-- highlight_clips: per-clip metadata/artifacts.
+## Key Architectural Decisions
 
-## Notes
+| Decision | Rationale |
+|----------|-----------|
+| Modal GPU workers | Serverless scaling and reproducible inference runtime |
+| Cloudflare R2 | S3-compatible object storage with cost-efficient transfer |
+| FastAPI | Strong async API/webhook ergonomics |
+| PostgreSQL | ACID + robust relational model for analytics artifacts |
+| Docker Compose | Reproducible local stack and easy reset/testing |
+| ffmpeg extraction/stitching | Deterministic media pipeline for M5 |
 
-- For source=annotated and player_id set, highlights use a player-targeted annotated source render.
-- This keeps only the selected player boxed in the final per-player reel.
-- Master annotated reels keep normal all-player annotation behavior.
+---
 
-## License
+## Known Limitations & Next Work
 
-Set your intended license in this section (MIT, Apache-2.0, or proprietary).
+- M6 composition layer not implemented yet (next milestone).
+- Advanced made/missed outcome semantics can still be improved.
+- Multi-camera and live-stream operation are out of current scope.
+- Production hardening opportunities remain (authz, quotas, observability, billing).
+
+---
+
+## Contributing & Code Style
+
+- Python 3.12, FastAPI conventions, SQLAlchemy ORM.
+- Alembic for schema migration.
+- Black + lint checks.
+- Pytest for unit/integration validation.
+
+---
+
+## Contact & License
+
+- Created: June 2026
+- Repo: GitHub (link)
+- License: set your intended license (MIT, Apache-2.0, or proprietary)
+
+---
+
+**Last updated:** June 15, 2026 — Milestones 1–5 complete, Milestone 6 next.
