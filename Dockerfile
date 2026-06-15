@@ -18,6 +18,7 @@ RUN apt-get update \
         libgl1 \
         libglib2.0-0 \
         libpq-dev \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -31,7 +32,7 @@ COPY alembic.ini ./
 COPY pytest.ini ./
 COPY README.md ./
 
-RUN mkdir -p /app/uploads/videos
+RUN mkdir -p /app/uploads/videos /app/uploads/composed /app/uploads/compose_work
 
 EXPOSE 8000
 

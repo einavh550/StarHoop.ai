@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 600
     video_storage_dir: str = "uploads/videos"
     annotated_export_dir: str = "uploads/annotated_exports"
+    asset_upload_dir: str = "uploads/assets"
+    music_asset_dir: str = "uploads/assets/music"
+    branding_asset_dir: str = "uploads/assets/branding"
+    player_photo_asset_dir: str = "uploads/assets/players"
     allowed_video_extensions: str = ".mp4,.mov,.avi,.mkv"
 
     # --- Milestone 5: highlight clip extraction & stitching ---------------
@@ -36,6 +40,33 @@ class Settings(BaseSettings):
     # A shot/layup is flagged "made" if a ball-in-basket detection lands within
     # this many seconds after the event ends.
     highlight_made_shot_window_sec: float = 1.5
+
+    # --- Milestone 6: professional personalized reel composition -----------
+    # Where composed (polished) reels are rendered before/while serving.
+    compose_export_dir: str = "uploads/composed"
+    # Local temp workspace for assets pulled from R2 + intermediate renders.
+    compose_work_dir: str = "uploads/compose_work"
+    # R2 prefixes the brand/music assets live under (see asset upload routes).
+    compose_music_prefix: str = "assets/music/"
+    compose_branding_prefix: str = "assets/branding/"
+    # Font used for intro card + overlays. fonts-dejavu-core is installed in the
+    # Docker image; this path resolves there. Pillow falls back to a default if
+    # the file is missing so local non-Docker runs still work.
+    compose_font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    compose_font_bold_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    # Intro/title card duration (seconds) prepended to the reel.
+    compose_intro_duration_sec: float = 3.0
+    # Fade duration (seconds) applied to the start/end of every segment for pacing.
+    compose_transition_sec: float = 0.5
+    # Music bed level and the level the original game audio is ducked to.
+    compose_music_volume: float = 0.35
+    compose_duck_level: float = 0.25
+    # Brand watermark opacity (0-1) for the persistent corner logo.
+    compose_watermark_opacity: float = 0.75
+    # Default output aspect. "16:9" (landscape) or "9:16" (vertical social).
+    compose_default_aspect: str = "16:9"
+    # Encode size for the 16:9 profile (vertical uses the swapped dimensions).
+    compose_video_height: int = 720
 
     # --- Milestone 4: Modal orchestration ---------------------------------
     # When enabled, /upload mirrors the saved video to Cloudflare R2 and spawns

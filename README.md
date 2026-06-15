@@ -119,6 +119,9 @@ StarHoop.ai/
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}` | Reel metadata/status | ✅ Live |
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}/download` | Download stitched reel | ✅ Live |
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download` | Download single clip | ✅ Live |
+| `POST` | `/api/assets/music` | Upload a music track for M6 composition | ✅ Ready |
+| `POST` | `/api/assets/branding/logo` | Upload the StarHoop.ai brand logo | ✅ Ready |
+| `POST` | `/api/assets/players/photo` | Upload a player photo and attach it to `photo_url` | ✅ Ready |
 | `GET` | `/health/` | Health check | ✅ Live |
 
 ---
@@ -197,6 +200,25 @@ PYTHONPATH=src python -m alembic upgrade head
 
 # Health
 curl http://localhost:8000/health/
+```
+
+### Asset Upload Locations
+
+- Music files are stored under `uploads/assets/music/`.
+- Brand logo files are stored under `uploads/assets/branding/`.
+- Player photos are stored under `uploads/assets/players/team_{team_id}/jersey_{jersey_number}/` and the saved path is written to `players.photo_url`.
+
+### Example Uploads
+
+```powershell
+# Music
+curl -X POST -F "file=@C:\path\to\theme.mp3" http://localhost:8000/api/assets/music
+
+# Brand logo
+curl -X POST -F "file=@C:\path\to\brand-logo.png" http://localhost:8000/api/assets/branding/logo
+
+# Player #14 photo (replace team_id with the correct team)
+curl -X POST -F "team_id=1" -F "jersey_number=14" -F "file=@C:\path\to\player14.jpg" http://localhost:8000/api/assets/players/photo
 ```
 
 ### M5 Validation Quick Path (job 16 example)

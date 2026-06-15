@@ -12,6 +12,7 @@ orchestration is actually enabled.
 from __future__ import annotations
 
 from functools import lru_cache
+from mimetypes import guess_type
 from pathlib import Path
 
 from app.core.config import settings
@@ -53,17 +54,21 @@ def _client():
     )
 
 
-def upload_video(local_path: str, key: str) -> str:
+def upload_file(local_path: str, key: str, content_type: str | None = None) -> str:
     """Upload ``local_path`` to the R2 bucket under ``key`` and return the key."""
     client = _client()
-    content_type = _guess_content_type(local_path)
+    resolved_content_type = content_type or _guess_content_type(local_path)
     client.upload_file(
         Filename=local_path,
         Bucket=settings.r2_bucket,
         Key=key,
-        ExtraArgs={"ContentType": content_type},
+        ExtraArgs={"ContentType": resolved_content_type},
     )
     return key
+
+
+def upload_video(local_path: str, key: str) -> str:
+    return upload_file(local_path=local_path, key=key)
 
 
 def generate_presigned_get_url(key: str, expires_in: int | None = None) -> str:
@@ -76,6 +81,39 @@ def generate_presigned_get_url(key: str, expires_in: int | None = None) -> str:
     )
 
 
+def download_file(key: str, local_path: str | Path) -> str:
+    """Download the object stored under ``key`` to ``local_path``.
+
+    The parent directory is created if needed. Returns the local path as a string.
+    """
+    client = _client()
+    destination = Path(local_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    client.download_file(Bucket=settings.r2_bucket, Key=key, Filename=str(destination))
+    return str(destination)
+
+
+def list_keys(prefix: str) -> list[str]:
+    """Return every object key under ``prefix`` (handles pagination)."""
+    client = _client()
+    keys: list[str] = []
+    continuation_token: str | None = None
+    while True:
+        kwargs = {"Bucket": settings.r2_bucket, "Prefix": prefix}
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**kwargs)
+        for obj in response.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith("/"):
+                keys.append(key)
+        if response.get("IsTruncated"):
+            continuation_token = response.get("NextContinuationToken")
+        else:
+            break
+    return sorted(keys)
+
+
 def _guess_content_type(local_path: str) -> str:
     suffix = Path(local_path).suffix.lower()
     return {
@@ -83,4 +121,14 @@ def _guess_content_type(local_path: str) -> str:
         ".mov": "video/quicktime",
         ".avi": "video/x-msvideo",
         ".mkv": "video/x-matroska",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
     }.get(suffix, "application/octet-stream")

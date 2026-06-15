@@ -94,3 +94,34 @@ def probe_duration(path: str | Path) -> float:
     if duration <= 0:
         raise FFmpegError(f"ffprobe returned non-positive duration for {path}")
     return duration
+
+
+def has_audio_stream(path: str | Path) -> bool:
+    """Return ``True`` when ``path`` contains at least one audio stream."""
+    ensure_ffmpeg_available()
+    command = [
+        FFPROBE_BINARY,
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "json",
+        str(path),
+    ]
+    completed = subprocess.run(  # noqa: S603 - fixed binary, no shell
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return False
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        return False
+    return bool(payload.get("streams"))

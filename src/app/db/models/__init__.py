@@ -1,5 +1,6 @@
 from app.db.models.action_detection import ActionDetection
 from app.db.models.coach import Coach
+from app.db.models.composed_reel import ComposedReel
 from app.db.models.detection_frame import DetectionFrame
 from app.db.models.highlight import Highlight
 from app.db.models.highlight_clip import HighlightClip
@@ -18,6 +19,7 @@ __all__ = [
     "Highlight",
     "HighlightReel",
     "HighlightClip",
+    "ComposedReel",
     "VideoJob",
     "VideoJobChunk",
     "DetectionFrame",

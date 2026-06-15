@@ -106,6 +106,23 @@ class VideoUploadResponse(BaseModel):
     message: str
 
 
+class AssetUploadResponse(BaseModel):
+    asset_type: str
+    original_filename: str
+    stored_filename: str
+    storage_key: str
+    download_url: str | None = None
+    message: str
+
+
+class PlayerPhotoUploadResponse(AssetUploadResponse):
+    team_id: int
+    jersey_number: int
+    player_id: int
+    player_name: str
+    photo_url: str
+
+
 class VideoJobStatusResponse(BaseModel):
     job_id: int
     team_id: int
@@ -218,6 +235,29 @@ class HighlightReelResponse(BaseModel):
 
 
 class HighlightReelStatusResponse(HighlightReelResponse):
+    file_size_bytes: int | None = None
+    error_message: str | None = None
+
+
+class ComposedReelResponse(BaseModel):
+    composed_reel_id: int
+    reel_id: int
+    job_id: int
+    team_id: int
+    player_id: int | None = None
+    status: str
+    aspect_ratio: str
+    music_track: str | None = None
+    has_intro: bool
+    has_stats: bool
+    has_watermark: bool
+    total_duration_sec: float
+    output_filename: str | None = None
+    download_url: str | None = None
+    created_at: datetime
+
+
+class ComposedReelStatusResponse(ComposedReelResponse):
     file_size_bytes: int | None = None
     error_message: str | None = None
 

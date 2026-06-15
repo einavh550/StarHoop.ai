@@ -18,17 +18,26 @@ from sqlalchemy.orm import Session
 from app.cv.highlights.clips import ClipExtractionError, VALID_SOURCE_MODES
 from app.cv.highlights.events import ALL_EVENT_TYPES
 from app.cv.highlights.ffmpeg import FFmpegError
+from app.cv.highlights.audio import MusicUnavailableError
+from app.cv.highlights.compose import CompositionError
+from app.cv.highlights.compose_service import (
+    CompositionRequestError,
+    ReelNotReadyError,
+    compose_reel,
+)
 from app.cv.highlights.service import (
     EmptyReelError,
     PlayerNotFoundError,
     generate_highlights,
 )
 from app.cv.schemas import (
+    ComposedReelResponse,
+    ComposedReelStatusResponse,
     HighlightClipResponse,
     HighlightReelResponse,
     HighlightReelStatusResponse,
 )
-from app.db.models import HighlightClip, HighlightReel, VideoJob
+from app.db.models import ComposedReel, HighlightClip, HighlightReel, VideoJob
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/videos", tags=["highlights"])
@@ -215,4 +224,144 @@ def download_highlight_clip(job_id: int, reel_id: int, clip_id: int, db: Session
         path=str(clip_path),
         media_type="video/mp4",
         filename=clip.clip_filename or clip_path.name,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Milestone 6: professional personalized reel composition
+# --------------------------------------------------------------------------- #
+
+
+def _composed_download_url(job_id: int, reel_id: int, composed_id: int) -> str:
+    return f"/api/videos/{job_id}/highlights/{reel_id}/compose/{composed_id}/download"
+
+
+def _composed_to_response(team_id: int, composed: ComposedReel) -> ComposedReelResponse:
+    return ComposedReelResponse(
+        composed_reel_id=composed.id,
+        reel_id=composed.reel_id,
+        job_id=composed.video_job_id,
+        team_id=team_id,
+        player_id=composed.player_id,
+        status=composed.status,
+        aspect_ratio=composed.aspect_ratio,
+        music_track=composed.music_track,
+        has_intro=composed.has_intro,
+        has_stats=composed.has_stats,
+        has_watermark=composed.has_watermark,
+        total_duration_sec=float(composed.total_duration_sec),
+        output_filename=composed.output_filename,
+        download_url=(
+            _composed_download_url(composed.video_job_id, composed.reel_id, composed.id)
+            if composed.output_filename
+            else None
+        ),
+        created_at=composed.created_at,
+    )
+
+
+def _load_composed(db: Session, job_id: int, reel_id: int, composed_id: int) -> tuple[VideoJob, ComposedReel]:
+    job, _ = _load_reel(db, job_id, reel_id)
+    composed = (
+        db.query(ComposedReel)
+        .filter(
+            ComposedReel.id == composed_id,
+            ComposedReel.reel_id == reel_id,
+            ComposedReel.video_job_id == job_id,
+        )
+        .first()
+    )
+    if composed is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Composed reel {composed_id} not found for reel {reel_id}",
+        )
+    return job, composed
+
+
+@router.post(
+    "/{job_id}/highlights/{reel_id}/compose",
+    response_model=ComposedReelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def compose_highlight_reel(
+    job_id: int,
+    reel_id: int,
+    aspect_ratio: Annotated[str | None, Query()] = None,
+    music_track: Annotated[str | None, Query()] = None,
+    include_intro: Annotated[bool, Query()] = True,
+    include_stats: Annotated[bool, Query()] = True,
+    include_watermark: Annotated[bool, Query()] = True,
+    db: Session = Depends(get_db),
+) -> ComposedReelResponse:
+    job, _ = _load_reel(db, job_id, reel_id)
+    try:
+        composed = compose_reel(
+            db=db,
+            job_id=job_id,
+            reel_id=reel_id,
+            aspect_ratio=aspect_ratio,
+            music_track=music_track,
+            include_intro=include_intro,
+            include_stats=include_stats,
+            include_watermark=include_watermark,
+        )
+        return _composed_to_response(job.team_id, composed)
+    except ReelNotReadyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except (CompositionRequestError, MusicUnavailableError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except (CompositionError, FFmpegError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Reel composition failed: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/{job_id}/highlights/{reel_id}/compose/{composed_id}",
+    response_model=ComposedReelStatusResponse,
+)
+def get_composed_reel(
+    job_id: int,
+    reel_id: int,
+    composed_id: int,
+    db: Session = Depends(get_db),
+) -> ComposedReelStatusResponse:
+    job, composed = _load_composed(db, job_id, reel_id, composed_id)
+
+    file_size_bytes: int | None = None
+    if composed.output_path:
+        output_path = Path(composed.output_path)
+        if output_path.exists():
+            file_size_bytes = output_path.stat().st_size
+
+    base = _composed_to_response(job.team_id, composed)
+    return ComposedReelStatusResponse(
+        **base.model_dump(),
+        file_size_bytes=file_size_bytes,
+        error_message=composed.error_message,
+    )
+
+
+@router.get("/{job_id}/highlights/{reel_id}/compose/{composed_id}/download")
+def download_composed_reel(
+    job_id: int,
+    reel_id: int,
+    composed_id: int,
+    db: Session = Depends(get_db),
+):
+    _, composed = _load_composed(db, job_id, reel_id, composed_id)
+    if not composed.output_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Composed reel {composed_id} is not ready (status={composed.status})",
+        )
+    output_path = Path(composed.output_path)
+    if not output_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Composed reel file not found")
+    return FileResponse(
+        path=str(output_path),
+        media_type="video/mp4",
+        filename=composed.output_filename or output_path.name,
     )
