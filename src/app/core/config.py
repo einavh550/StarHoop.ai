@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     # Default output aspect. "16:9" (landscape) or "9:16" (vertical social).
     compose_default_aspect: str = "16:9"
     # Encode size for the 16:9 profile (vertical uses the swapped dimensions).
-    compose_video_height: int = 720
+    # 1080 (Full HD) for a crisp, deployment-ready master.
+    compose_video_height: int = 1080
 
     # --- Milestone 4: Modal orchestration ---------------------------------
     # When enabled, /upload mirrors the saved video to Cloudflare R2 and spawns

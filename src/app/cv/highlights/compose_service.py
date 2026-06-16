@@ -192,7 +192,7 @@ def compose_reel(
             watermark_path = overlays.render_watermark(
                 work_dir / "watermark.png",
                 logo_path=logo_path,
-                target_width=int(width * 0.16),
+                target_width=int(width * 0.10),
                 opacity=settings.compose_watermark_opacity,
             )
             watermark_path = Path(watermark_path) if watermark_path else None

@@ -28,11 +28,29 @@ from app.cv.highlights.ffmpeg import (
 logger = logging.getLogger(__name__)
 
 # Uniform encode params so every segment shares codec settings and the concat
-# demuxer can stream-copy them together without re-encoding.
-_VIDEO_ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+# demuxer can stream-copy them together without re-encoding. CRF 18 + the high
+# profile yields a visually lossless, deployment-ready master.
+_VIDEO_ENCODE = [
+    "-c:v",
+    "libx264",
+    "-preset",
+    "slow",
+    "-crf",
+    "18",
+    "-profile:v",
+    "high",
+    "-level",
+    "4.2",
+    "-pix_fmt",
+    "yuv420p",
+]
 _AUDIO_ENCODE = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 _FPS = 30
 _SILENCE_INPUT = "anullsrc=channel_layout=stereo:sample_rate=48000"
+# Subtle broadcast-style color grade + sharpening applied uniformly to every
+# game clip so the reel looks consistent and punchy.
+_COLOR_GRADE = "eq=contrast=1.06:saturation=1.12:brightness=0.012:gamma=0.98"
+_SHARPEN = "unsharp=5:5:0.8:5:5:0.0"
 
 
 class CompositionError(RuntimeError):
@@ -89,7 +107,8 @@ def build_clip_args(
     chain = [
         f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"setsar=1,fps={fps},format=yuv420p[bg]"
+        f"setsar=1,fps={fps},format=yuv420p,"
+        f"{_COLOR_GRADE},{_SHARPEN}[bg]"
     ]
     current = "[bg]"
     overlay_index = 1
@@ -231,7 +250,8 @@ def build_music_mix_args(
         "-filter_complex",
         (
             f"[1:a]volume={music_volume:.3f}[music];"
-            "[0:a][music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+            "[0:a][music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+            "loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
         ),
         "-map",
         "0:v",

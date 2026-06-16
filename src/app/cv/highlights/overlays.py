@@ -144,6 +144,29 @@ def _fit_circle(image: Image.Image, diameter: int) -> Image.Image:
     return circled
 
 
+def _circular_logo(image: Image.Image, diameter: int, *, pad_ratio: float = 0.12) -> Image.Image:
+    """Fit ``image`` fully inside a transparent circle (no content is cropped).
+
+    Unlike :func:`_fit_circle` (which center-crops a photo to fill the circle),
+    this contains the whole logo inside the circle on a transparent background so
+    wordmarks are never clipped.
+    """
+    source = image.convert("RGBA")
+    inner = max(1, int(diameter * (1.0 - pad_ratio)))
+    scale = min(inner / source.width, inner / source.height)
+    new_size = (max(1, int(source.width * scale)), max(1, int(source.height * scale)))
+    resized = source.resize(new_size, Image.LANCZOS)
+
+    circled = Image.new("RGBA", (diameter, diameter), (0, 0, 0, 0))
+    offset = ((diameter - new_size[0]) // 2, (diameter - new_size[1]) // 2)
+    circled.paste(resized, offset, resized)
+
+    mask = Image.new("L", (diameter, diameter), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
+    circled.putalpha(Image.composite(circled.getchannel("A"), Image.new("L", (diameter, diameter), 0), mask))
+    return circled
+
+
 def render_intro_card(
     output_path: str | Path,
     *,
@@ -164,13 +187,25 @@ def render_intro_card(
     card = _vertical_gradient((width, height), _BG_TOP, _BG_BOTTOM).convert("RGBA")
     draw = ImageDraw.Draw(card)
 
-    title_font = _load_font(font_bold_path or font_path, max(28, int(height * 0.085)))
-    subtitle_font = _load_font(font_path, max(18, int(height * 0.05)))
-    stats_font = _load_font(font_path, max(16, int(height * 0.042)))
+    margin = int(width * 0.04)
+    title_font = _load_font(font_bold_path or font_path, max(28, int(height * 0.072)))
+    subtitle_font = _load_font(font_path, max(18, int(height * 0.040)))
+    stats_header_font = _load_font(font_bold_path or font_path, max(18, int(height * 0.044)))
+    stats_font = _load_font(font_path, max(16, int(height * 0.038)))
+
+    # Brand logo: circular, transparent, pinned to the TOP-LEFT corner so it
+    # never overlaps the centered player photo.
+    if logo_path and Path(str(logo_path)).exists():
+        try:
+            with Image.open(logo_path) as raw_logo:
+                logo = _circular_logo(raw_logo, int(height * 0.13))
+            card.alpha_composite(logo, (margin, margin))
+        except OSError:
+            logger.warning("Could not load brand logo for intro card: %s", logo_path)
 
     # Player photo as a centered circle near the top third.
-    photo_diameter = int(height * 0.34)
-    photo_center_y = int(height * 0.30)
+    photo_diameter = int(height * 0.30)
+    photo_center_y = int(height * 0.29)
     if photo_path and Path(str(photo_path)).exists():
         try:
             with Image.open(photo_path) as raw_photo:
@@ -186,46 +221,43 @@ def render_intro_card(
 
     # Title (player name + number) and subtitle (team / season).
     title_w, title_h = _text_size(draw, title, title_font)
-    title_y = int(height * 0.52)
+    title_y = int(height * 0.49)
     draw.text(((width - title_w) // 2, title_y), title, font=title_font, fill=_TEXT)
 
-    accent_y = title_y + title_h + int(height * 0.02)
-    accent_w = int(width * 0.16)
-    draw.rectangle(
-        ((width - accent_w) // 2, accent_y, (width + accent_w) // 2, accent_y + max(4, int(height * 0.008))),
+    # Accent underline spans the FULL title width (name + number as one unit).
+    accent_h = max(4, int(height * 0.009))
+    accent_pad = int(width * 0.015)
+    accent_w = title_w + accent_pad * 2
+    accent_y = title_y + title_h + int(height * 0.018)
+    draw.rounded_rectangle(
+        (
+            (width - accent_w) // 2,
+            accent_y,
+            (width + accent_w) // 2,
+            accent_y + accent_h,
+        ),
+        radius=accent_h // 2,
         fill=_ACCENT,
     )
 
-    subtitle_w, _ = _text_size(draw, subtitle, subtitle_font)
+    subtitle_w, subtitle_h = _text_size(draw, subtitle, subtitle_font)
+    subtitle_y = accent_y + accent_h + int(height * 0.022)
     draw.text(
-        ((width - subtitle_w) // 2, accent_y + int(height * 0.03)),
+        ((width - subtitle_w) // 2, subtitle_y),
         subtitle,
         font=subtitle_font,
         fill=_TEXT_MUTED,
     )
 
-    # Stats block.
+    # Stats block: a single cohesive, evenly spaced column with no large gap.
     if stats_lines:
-        line_height = int(height * 0.058)
-        block_height = line_height * len(stats_lines)
-        start_y = int(height * 0.70)
+        line_height = int(height * 0.050)
+        start_y = subtitle_y + subtitle_h + int(height * 0.045)
         for index, line in enumerate(stats_lines):
-            line_w, _ = _text_size(draw, line, stats_font)
+            line_font = stats_header_font if index == 0 else stats_font
             fill = _ACCENT if index == 0 else _TEXT_MUTED
-            draw.text(((width - line_w) // 2, start_y + index * line_height), line, font=stats_font, fill=fill)
-        _ = block_height
-
-    # Brand logo, top-center.
-    if logo_path and Path(str(logo_path)).exists():
-        try:
-            with Image.open(logo_path) as raw_logo:
-                logo = raw_logo.convert("RGBA")
-            target_w = int(width * 0.22)
-            scale = target_w / logo.width
-            logo = logo.resize((target_w, max(1, int(logo.height * scale))), Image.LANCZOS)
-            card.alpha_composite(logo, ((width - logo.width) // 2, int(height * 0.04)))
-        except OSError:
-            logger.warning("Could not load brand logo for intro card: %s", logo_path)
+            line_w, _ = _text_size(draw, line, line_font)
+            draw.text(((width - line_w) // 2, start_y + index * line_height), line, font=line_font, fill=fill)
 
     card.convert("RGB").save(output_path, format="PNG")
     return str(output_path)
@@ -253,23 +285,30 @@ def render_lower_third(
     draw.rectangle((0, band_top, width, height), fill=_BAND)
     draw.rectangle((0, band_top, int(width * 0.012), height), fill=_ACCENT)
 
-    primary_font = _load_font(font_bold_path or font_path, max(20, int(band_height * 0.42)))
+    # Smaller, tighter type so the name and the event chip never collide.
+    primary_font = _load_font(font_bold_path or font_path, max(18, int(band_height * 0.30)))
     pad_x = int(width * 0.03)
-    primary_y = band_top + int(band_height * 0.18)
+    primary_y = band_top + int(band_height * 0.16)
     draw.text((pad_x, primary_y), primary, font=primary_font, fill=_TEXT)
 
     if secondary:
-        secondary_font = _load_font(font_path, max(14, int(band_height * 0.30)))
+        secondary_font = _load_font(font_path, max(12, int(band_height * 0.22)))
         chip_w, chip_h = _text_size(draw, secondary, secondary_font)
-        chip_pad = int(band_height * 0.16)
+        chip_pad_x = int(band_height * 0.14)
+        chip_pad_y = int(band_height * 0.10)
         chip_x = pad_x
-        chip_y = band_top + int(band_height * 0.60)
+        chip_y = band_top + int(band_height * 0.62)
         draw.rounded_rectangle(
-            (chip_x - chip_pad // 2, chip_y - chip_pad // 4, chip_x + chip_w + chip_pad, chip_y + chip_h + chip_pad // 2),
-            radius=int(chip_h * 0.5),
+            (
+                chip_x - chip_pad_x // 2,
+                chip_y - chip_pad_y,
+                chip_x + chip_w + chip_pad_x,
+                chip_y + chip_h + chip_pad_y,
+            ),
+            radius=int((chip_h + chip_pad_y * 2) * 0.5),
             fill=_ACCENT,
         )
-        draw.text((chip_x + chip_pad // 2, chip_y), secondary, font=secondary_font, fill=(20, 24, 40))
+        draw.text((chip_x + chip_pad_x // 2, chip_y), secondary, font=secondary_font, fill=(20, 24, 40))
 
     overlay.save(output_path, format="PNG")
     return str(output_path)
@@ -293,13 +332,10 @@ def render_watermark(
 
     try:
         with Image.open(logo_path) as raw_logo:
-            logo = raw_logo.convert("RGBA")
+            logo = _circular_logo(raw_logo, target_width)
     except OSError:
         logger.warning("Could not load watermark logo: %s", logo_path)
         return None
-
-    scale = target_width / logo.width
-    logo = logo.resize((target_width, max(1, int(logo.height * scale))), Image.LANCZOS)
 
     alpha = logo.getchannel("A").point(lambda value: int(value * max(0.0, min(1.0, opacity))))
     logo.putalpha(alpha)
