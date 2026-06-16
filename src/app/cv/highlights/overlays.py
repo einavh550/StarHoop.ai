@@ -23,6 +23,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from app.cv.highlights.events import (
+    EVENT_BALL_IN_BASKET,
+    EVENT_JUMP_SHOT,
     EVENT_LAYUP_DUNK,
     EVENT_POSSESSION,
     EVENT_SHOT_ATTEMPT,
@@ -42,8 +44,10 @@ _BAND = (0, 0, 0, 165)       # translucent black band for the lower third
 _EVENT_LABELS: dict[str, str] = {
     EVENT_SHOT_ATTEMPT: "Shot",
     EVENT_LAYUP_DUNK: "Layup / Dunk",
+    EVENT_JUMP_SHOT: "Jump Shot",
     EVENT_SHOT_BLOCK: "Block",
     EVENT_POSSESSION: "Possession",
+    EVENT_BALL_IN_BASKET: "Bucket",
 }
 
 
@@ -63,7 +67,14 @@ class ReelStats:
     def summary_lines(self) -> list[str]:
         """Return display lines for the intro card stats block."""
         lines = [f"{self.total_clips} HIGHLIGHTS"]
-        ordered = (EVENT_LAYUP_DUNK, EVENT_SHOT_ATTEMPT, EVENT_SHOT_BLOCK, EVENT_POSSESSION)
+        ordered = (
+            EVENT_LAYUP_DUNK,
+            EVENT_JUMP_SHOT,
+            EVENT_SHOT_ATTEMPT,
+            EVENT_BALL_IN_BASKET,
+            EVENT_SHOT_BLOCK,
+            EVENT_POSSESSION,
+        )
         for event_type in ordered:
             count = self.counts.get(event_type, 0)
             if count:

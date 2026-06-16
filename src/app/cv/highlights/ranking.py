@@ -8,6 +8,8 @@ Events are sorted by descending score and capped at ``max_clips``.
 from __future__ import annotations
 
 from app.cv.highlights.events import (
+    EVENT_BALL_IN_BASKET,
+    EVENT_JUMP_SHOT,
     EVENT_LAYUP_DUNK,
     EVENT_POSSESSION,
     EVENT_SHOT_ATTEMPT,
@@ -19,6 +21,8 @@ from app.cv.highlights.events import (
 EVENT_TYPE_WEIGHTS: dict[str, float] = {
     EVENT_LAYUP_DUNK: 1.0,
     EVENT_SHOT_BLOCK: 0.9,
+    EVENT_BALL_IN_BASKET: 0.85,
+    EVENT_JUMP_SHOT: 0.75,
     EVENT_SHOT_ATTEMPT: 0.7,
     EVENT_POSSESSION: 0.4,
 }

@@ -248,8 +248,11 @@ def build_music_mix_args(
 
 
 def _escape_concat_path(path: Path) -> str:
-    # The concat demuxer treats single quotes specially; escape them.
-    return str(path).replace("'", "'\\''")
+    # The concat demuxer resolves relative entries against the directory that
+    # holds the concat list, so always emit an absolute path. Single quotes are
+    # special to the demuxer and must be escaped.
+    absolute = path.resolve().as_posix()
+    return absolute.replace("'", "'\\''")
 
 
 def write_concat_list(segment_paths: list[Path], list_path: Path) -> Path:

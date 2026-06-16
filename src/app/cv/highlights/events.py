@@ -32,19 +32,24 @@ from app.db.models import ActionDetection, DetectionFrame, JerseyDetection, Vide
 # Event-type identifiers used throughout the highlight pipeline.
 EVENT_SHOT_ATTEMPT = "shot_attempt"
 EVENT_LAYUP_DUNK = "layup_dunk"
+EVENT_JUMP_SHOT = "jump_shot"
 EVENT_SHOT_BLOCK = "shot_block"
 EVENT_POSSESSION = "possession"
+EVENT_BALL_IN_BASKET = "ball_in_basket"
 
 ALL_EVENT_TYPES: tuple[str, ...] = (
     EVENT_SHOT_ATTEMPT,
     EVENT_LAYUP_DUNK,
+    EVENT_JUMP_SHOT,
     EVENT_SHOT_BLOCK,
     EVENT_POSSESSION,
+    EVENT_BALL_IN_BASKET,
 )
 
 # Frame detector class names -> highlight event types.
 FRAME_EVENT_CLASS_MAP: dict[str, str] = {
     "player-layup-dunk": EVENT_LAYUP_DUNK,
+    "player-jump-shot": EVENT_JUMP_SHOT,
     "player-shot-block": EVENT_SHOT_BLOCK,
     "player-in-possession": EVENT_POSSESSION,
 }
@@ -52,7 +57,9 @@ FRAME_EVENT_CLASS_MAP: dict[str, str] = {
 BALL_IN_BASKET_CLASS = "ball-in-basket"
 
 # Event types eligible to be flagged as a made shot via ball-in-basket proximity.
-MADE_ELIGIBLE_EVENT_TYPES: frozenset[str] = frozenset({EVENT_SHOT_ATTEMPT, EVENT_LAYUP_DUNK})
+MADE_ELIGIBLE_EVENT_TYPES: frozenset[str] = frozenset(
+    {EVENT_SHOT_ATTEMPT, EVENT_LAYUP_DUNK, EVENT_JUMP_SHOT}
+)
 
 
 @dataclass
@@ -131,8 +138,9 @@ def derive_events(
         max_gap_sec=max_gap_sec,
         min_observations=min_frame_event_observations,
     )
+    basket_events = _derive_ball_in_basket_events(frames, max_gap_sec=max_gap_sec)
 
-    events = action_events + frame_events
+    events = action_events + frame_events + basket_events
     _apply_made_shot_flags(events, frames, made_shot_window_sec=made_shot_window_sec)
 
     events.sort(key=lambda e: (e.start_timestamp_sec, e.start_frame))
@@ -213,6 +221,50 @@ def _derive_frame_events(
                     confidence=round(sum(confidences) / len(confidences), 3),
                 )
             )
+    return events
+
+
+def _derive_ball_in_basket_events(
+    frames,
+    *,
+    max_gap_sec: float,
+) -> list[HighlightEvent]:
+    # ``ball-in-basket`` is detected on the ball, not a tracked player, so these
+    # events carry no track/player. Consecutive detections of the same made
+    # basket are grouped into one event to avoid double-counting.
+    observations: list[FrameObservation] = []
+    for frame in frames:
+        frame_number = int(frame.frame_number)
+        timestamp = float(frame.timestamp_sec)
+        for det in frame.detections_json or []:
+            if (det.get("class_name") or "").lower() != BALL_IN_BASKET_CLASS:
+                continue
+            observations.append(
+                FrameObservation(
+                    frame_number=frame_number,
+                    timestamp_sec=timestamp,
+                    confidence=float(det.get("confidence") or 0.0),
+                )
+            )
+
+    events: list[HighlightEvent] = []
+    for segment in _split_segments(observations, max_gap_sec=max_gap_sec):
+        start = segment[0]
+        end = segment[-1]
+        confidences = [o.confidence for o in segment]
+        events.append(
+            HighlightEvent(
+                event_type=EVENT_BALL_IN_BASKET,
+                source="frame",
+                track_id=None,
+                mapped_player_id=None,
+                start_frame=start.frame_number,
+                end_frame=end.frame_number,
+                start_timestamp_sec=start.timestamp_sec,
+                end_timestamp_sec=end.timestamp_sec,
+                confidence=round(sum(confidences) / len(confidences), 3),
+            )
+        )
     return events
 
 
