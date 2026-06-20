@@ -206,6 +206,42 @@ def _draw_track_overlay(
     _draw_text_chip(frame, cv2, label, label_x, label_y, (33, 37, 41))
 
 
+def _box_area(box: tuple[int, int, int, int]) -> int:
+    x1, y1, x2, y2 = box
+    return max(0, x2 - x1) * max(0, y2 - y1)
+
+
+def select_single_box_per_player(
+    track_boxes: dict[int, tuple[int, int, int, int]],
+    identity_by_track: dict[int, tuple[Player | None, int | None]],
+) -> dict[int, tuple[int, int, int, int]]:
+    """Drop redundant boxes so each roster player is drawn at most once per frame.
+
+    When SAM-2 fragments one player into multiple tracks, two boxes for the same
+    ``#/name`` appear in a single frame (the "duplicate identity" bug). For each
+    player resolved in this frame we keep only the largest-area box (the most
+    confident foreground detection) and suppress the rest. Tracks with no matched
+    player (``player is None``) are always kept — opponents and unknowns are not
+    collapsed.
+    """
+    best_track_for_player: dict[int, int] = {}
+    for track_id, box in track_boxes.items():
+        player, _jersey = identity_by_track.get(track_id, (None, None))
+        if player is None:
+            continue
+        current = best_track_for_player.get(player.id)
+        if current is None or _box_area(box) > _box_area(track_boxes[current]):
+            best_track_for_player[player.id] = track_id
+
+    kept_player_tracks = set(best_track_for_player.values())
+    selected: dict[int, tuple[int, int, int, int]] = {}
+    for track_id, box in track_boxes.items():
+        player, _jersey = identity_by_track.get(track_id, (None, None))
+        if player is None or track_id in kept_player_tracks:
+            selected[track_id] = box
+    return selected
+
+
 @dataclass(frozen=True)
 class AnnotatedExportResult:
     export_id: str
@@ -295,6 +331,9 @@ def render_annotated_export(
         while True:
             annotated_frame = current_frame.copy()
             track_boxes = boxes_per_frame.get(frame_number)
+            if track_boxes and settings.track_consolidation:
+                # Fix 1: collapse fragmented tracks so a player is boxed once.
+                track_boxes = select_single_box_per_player(track_boxes, identity_by_track)
             if track_boxes:
                 for track_id, box in track_boxes.items():
                     player, jersey = identity_by_track.get(track_id, (None, None))

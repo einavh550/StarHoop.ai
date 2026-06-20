@@ -74,6 +74,54 @@ class Settings(BaseSettings):
     # 1080 (Full HD) for a crisp, deployment-ready master.
     compose_video_height: int = 1080
 
+    # --- CV pipeline remediation feature flags ----------------------------
+    # Every behavioral fix below ships behind a flag defaulting to the CURRENT
+    # (pre-remediation) behavior, so the M5/M6 + Android-facing pipeline is
+    # untouched until a flag is explicitly flipped after the golden-job
+    # regression harness passes. See cv_pipeline_remediation plan.
+    #
+    # Fix 3 - deduplicate highlight clips by the mapped roster player instead of
+    # the raw track_id, so a player fragmented across track_ids no longer yields
+    # two near-identical clips. Falls back to track_id when unmapped.
+    dedup_by_player: bool = False
+    # Fix 3 (optional) - also suppress overlapping clips of DIFFERENT event types
+    # for the same player/time window (keep the highest-weighted one).
+    dedup_cross_type_suppression: bool = False
+
+    # Fix 1 - merge tracks that resolve to the same roster player into one
+    # canonical identity (consolidation) and render a single box per player.
+    track_consolidation: bool = False
+
+    # Fix 2 - stabilize a track's action label by majority vote over a short
+    # window instead of last-write-wins, and require stronger evidence before a
+    # high-value (shot_block / jump_shot) event is emitted.
+    action_temporal_voting: bool = False
+    # Window (in processed frames) used for the action majority vote.
+    action_vote_window: int = 7
+    # Higher observation + confidence floors for high-value action events so a
+    # 1-2 frame blip cannot create a phantom block/jump-shot. Applied only when
+    # action_temporal_voting is on (current behavior otherwise).
+    action_high_value_min_observations: int = 4
+    action_high_value_min_confidence: float = 0.5
+
+    # Single-team opponent gate - require the SigLIP team color AND a roster
+    # jersey match before mapping a track to a coached-team player; otherwise the
+    # track maps to NULL (opponent) instead of being forced onto your roster.
+    opponent_team_gate: bool = False
+
+    # Fix 4 - resolve heavily-overlapping same-team masks on the SAM-2 tracked
+    # output (IoU above this threshold collapses to the larger/closer track).
+    overlap_resolution: bool = False
+    overlap_resolution_iou: float = 0.85
+
+    # Fix 5 - periodic re-detection & track reconciliation: every N PROCESSED
+    # frames re-run RF-DETR and re-prompt SAM-2 with unmatched detections so
+    # new/late/recovered players get tracked. 0 disables (current behavior).
+    periodic_redetect_interval: int = 0
+    # IoU below which a fresh detection is considered unmatched to any active
+    # track and therefore a candidate for re-prompting.
+    periodic_redetect_match_iou: float = 0.3
+
     # --- Milestone 4: Modal orchestration ---------------------------------
     # When enabled, /upload mirrors the saved video to Cloudflare R2 and spawns
     # the deployed Modal job to process it on GPU. When disabled (default), the

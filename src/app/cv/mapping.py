@@ -6,7 +6,7 @@ Uses outlier-resistant aggregation and provides detailed diagnostics.
 """
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from statistics import mean, median, stdev
 from typing import Optional
@@ -100,6 +100,7 @@ class PlayerMapper:
             'confidences': [],
             'jersey_numbers': [],
             'high_confidence_votes': [],
+            'team_ids': [],
         })
         
         for frame in detection_frames:
@@ -116,6 +117,10 @@ class PlayerMapper:
                     # Track high-confidence detections separately for consensus voting
                     if jersey_conf >= settings.ocr_confidence_strict:
                         jersey_aggregates[track_id]['high_confidence_votes'].append(jersey_num)
+                    # Remember the SigLIP team cluster for the single-team gate.
+                    team_id = detection.get('team_id')
+                    if team_id is not None:
+                        jersey_aggregates[track_id]['team_ids'].append(int(team_id))
         
         if not jersey_aggregates:
             logger.warning(f"No jersey detections found for job {video_job_id}")
@@ -203,7 +208,72 @@ class PlayerMapper:
                 f"player={suggested_player.full_name if suggested_player else 'NONE'} "
                 f"rating={match_rating} reason={match_reason}"
             )
-        
+
+        # Single-team opponent gate: only the SigLIP cluster that best matches the
+        # coached roster keeps its player mappings; the other cluster's tracks map
+        # to NULL so opponents are never forced onto your roster.
+        if settings.opponent_team_gate:
+            track_team = {
+                track_id: Counter(stats['team_ids']).most_common(1)[0][0]
+                for track_id, stats in jersey_aggregates.items()
+                if stats['team_ids']
+            }
+            PlayerMapper.apply_opponent_gate(result, track_team)
+
+        return result
+
+    @staticmethod
+    def select_coached_cluster(
+        result: dict[int, dict],
+        track_team: dict[int, int],
+    ) -> Optional[int]:
+        """Return the SigLIP cluster whose tracks best match the coached roster.
+
+        Each cluster is scored by the total frame count of its roster-matched
+        tracks (frame-weighted so track fragmentation does not skew the vote).
+        The coached team is simply the cluster that looks most like the known
+        roster. Returns ``None`` when no track matched any roster player.
+        """
+        score_per_cluster: dict[int, int] = defaultdict(int)
+        for track_id, data in result.items():
+            cluster = track_team.get(track_id)
+            if cluster is None or data.get('suggested_player') is None:
+                continue
+            score_per_cluster[cluster] += int(data.get('frame_count', 1))
+        if not score_per_cluster:
+            return None
+        return max(score_per_cluster, key=lambda cluster: score_per_cluster[cluster])
+
+    @staticmethod
+    def apply_opponent_gate(
+        result: dict[int, dict],
+        track_team: dict[int, int],
+    ) -> dict[int, dict]:
+        """Null out player mappings for tracks not on the coached team's cluster.
+
+        Mutates and returns ``result``. A track is gated only when its cluster is
+        known AND differs from the coached cluster; unknown-cluster tracks are
+        left as-is so we never lose a genuine roster player to missing team data.
+        """
+        coached_cluster = PlayerMapper.select_coached_cluster(result, track_team)
+        if coached_cluster is None:
+            return result
+
+        for track_id, data in result.items():
+            cluster = track_team.get(track_id)
+            if (
+                cluster is not None
+                and cluster != coached_cluster
+                and data.get('suggested_player') is not None
+            ):
+                data['suggested_player'] = None
+                data['match_rating'] = 'no_match'
+                logger.info(
+                    "opponent_gate: track_id=%s cluster=%s != coached %s -> mapped to NULL",
+                    track_id,
+                    cluster,
+                    coached_cluster,
+                )
         return result
     
     @staticmethod
@@ -310,7 +380,16 @@ class PlayerMapper:
             List of created JerseyDetection records
         """
         created = []
-        
+
+        # Idempotency: clear any rows from a prior run before inserting, so
+        # re-running the mapping (e.g. POST .../player_mapping/auto a second time)
+        # never trips the UNIQUE(video_job_id, track_id) constraint. The annotated
+        # export already does this; doing it here makes every caller safe.
+        db.query(JerseyDetection).filter(
+            JerseyDetection.video_job_id == video_job_id
+        ).delete()
+        db.flush()
+
         for track_id, data in aggregated_jerseys.items():
             jersey_detection = JerseyDetection(
                 video_job_id=video_job_id,
@@ -330,6 +409,37 @@ class PlayerMapper:
         
         return created
     
+    @staticmethod
+    def consolidate_tracks_by_player(aggregated: dict[int, dict]) -> dict[int, int]:
+        """Group tracks that resolve to the SAME roster player under one
+        canonical track id (Fix 1 — track consolidation).
+
+        SAM-2 frequently fragments one physical player into several
+        ``track_id``s (chunk boundaries, occlusion loss, late re-prompts). Since
+        every fragment carries the same jersey, they all map to the same
+        ``suggested_player``. This returns ``{track_id: canonical_track_id}`` so
+        downstream consumers can treat the fragments as one identity. The
+        canonical track is the one with the most frames (tie-break: highest
+        ``confidence_max``). Tracks with no matched player map to themselves and
+        are never merged with anything.
+        """
+        by_player: dict[int, list[int]] = defaultdict(list)
+        for track_id, data in aggregated.items():
+            player = data.get("suggested_player")
+            if player is None:
+                continue
+            by_player[player.id].append(int(track_id))
+
+        canonical: dict[int, int] = {int(track_id): int(track_id) for track_id in aggregated}
+        for tracks in by_player.values():
+            best = max(
+                tracks,
+                key=lambda t: (aggregated[t]["frame_count"], aggregated[t]["confidence_max"]),
+            )
+            for track_id in tracks:
+                canonical[track_id] = best
+        return canonical
+
     @staticmethod
     def _get_players_by_jersey(db: Session, team_id: int) -> dict[int, Player]:
         """

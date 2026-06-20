@@ -61,6 +61,12 @@ MADE_ELIGIBLE_EVENT_TYPES: frozenset[str] = frozenset(
     {EVENT_SHOT_ATTEMPT, EVENT_LAYUP_DUNK, EVENT_JUMP_SHOT}
 )
 
+# High-value action types that are most often produced by 1-2 frame detector
+# blips (a blocker's box momentarily matching the shooter's mask, etc.). When
+# Fix 2 gating is enabled these require stronger evidence before becoming an
+# event, so a phantom block/jump-shot cannot reach the reel.
+HIGH_VALUE_EVENT_TYPES: frozenset[str] = frozenset({EVENT_SHOT_BLOCK, EVENT_JUMP_SHOT})
+
 
 @dataclass
 class FrameObservation:
@@ -90,6 +96,9 @@ def derive_events(
     max_gap_sec: float = 0.6,
     min_frame_event_observations: int = 2,
     made_shot_window_sec: float = 1.5,
+    high_value_gating: bool = False,
+    high_value_min_observations: int = 4,
+    high_value_min_confidence: float = 0.5,
 ) -> list[HighlightEvent]:
     """Build the full list of highlight events for ``video_job_id``.
 
@@ -104,6 +113,13 @@ def derive_events(
         made_shot_window_sec: A shot/layup is marked ``made`` if a
             ``ball-in-basket`` detection appears within this window after the
             event ends.
+        high_value_gating: When set (Fix 2), high-value events
+            (:data:`HIGH_VALUE_EVENT_TYPES`) must clear stronger thresholds so a
+            brief detector blip cannot manufacture a block/jump-shot.
+        high_value_min_observations: Minimum observations for a high-value event
+            when gating is on.
+        high_value_min_confidence: Minimum mean confidence for a high-value event
+            when gating is on.
 
     Returns:
         Events sorted by start timestamp.
@@ -137,6 +153,9 @@ def derive_events(
         player_by_track=player_by_track,
         max_gap_sec=max_gap_sec,
         min_observations=min_frame_event_observations,
+        high_value_gating=high_value_gating,
+        high_value_min_observations=high_value_min_observations,
+        high_value_min_confidence=high_value_min_confidence,
     )
     basket_events = _derive_ball_in_basket_events(frames, max_gap_sec=max_gap_sec)
 
@@ -178,6 +197,9 @@ def _derive_frame_events(
     player_by_track: dict[int, int | None],
     max_gap_sec: float,
     min_observations: int,
+    high_value_gating: bool = False,
+    high_value_min_observations: int = 4,
+    high_value_min_confidence: float = 0.5,
 ) -> list[HighlightEvent]:
     # Group observations by (event_type, track_id).
     observations: dict[tuple[str, int], list[FrameObservation]] = defaultdict(list)
@@ -202,12 +224,23 @@ def _derive_frame_events(
 
     events: list[HighlightEvent] = []
     for (event_type, track_id), obs in observations.items():
+        is_high_value = high_value_gating and event_type in HIGH_VALUE_EVENT_TYPES
+        required_observations = (
+            max(min_observations, high_value_min_observations)
+            if is_high_value
+            else min_observations
+        )
         for segment in _split_segments(obs, max_gap_sec=max_gap_sec):
-            if len(segment) < min_observations:
+            if len(segment) < required_observations:
                 continue
             start = segment[0]
             end = segment[-1]
             confidences = [o.confidence for o in segment]
+            mean_confidence = sum(confidences) / len(confidences)
+            # Gate high-value events on confidence so a low-confidence blip that
+            # happens to persist for a few frames still cannot become a block.
+            if is_high_value and mean_confidence < high_value_min_confidence:
+                continue
             events.append(
                 HighlightEvent(
                     event_type=event_type,
@@ -218,7 +251,7 @@ def _derive_frame_events(
                     end_frame=end.frame_number,
                     start_timestamp_sec=start.timestamp_sec,
                     end_timestamp_sec=end.timestamp_sec,
-                    confidence=round(sum(confidences) / len(confidences), 3),
+                    confidence=round(mean_confidence, 3),
                 )
             )
     return events

@@ -215,6 +215,36 @@ def test_jersey_detection_persistence(test_data_setup):
     assert jersey_detection.mapped_player_id is not None
 
 
+def test_persist_jersey_detections_is_idempotent(test_data_setup):
+    """Re-running persistence must not trip UNIQUE(video_job_id, track_id)."""
+    session = test_data_setup['session']
+    job = test_data_setup['job']
+    team = test_data_setup['team']
+
+    detections_json = [
+        {'track_id': 10, 'class_id': 0, 'jersey_number': 23, 'jersey_confidence': 0.9}
+    ]
+    frame = DetectionFrame(
+        video_job_id=job.id,
+        frame_number=0,
+        timestamp_sec=Decimal('0.0'),
+        detections_json=detections_json,
+    )
+    session.add(frame)
+    session.commit()
+
+    from app.db.models import JerseyDetection
+
+    aggregated = PlayerMapper.aggregate_jerseys_from_video(session, job.id, team.id)
+    PlayerMapper.persist_jersey_detections(session, job.id, aggregated)
+    # Second run used to crash on the unique constraint; now it replaces.
+    PlayerMapper.persist_jersey_detections(session, job.id, aggregated)
+
+    rows = session.query(JerseyDetection).filter(JerseyDetection.video_job_id == job.id).all()
+    assert len(rows) == 1
+    assert rows[0].track_id == 10
+
+
 def test_aggregation_with_mixed_jersey_consistency(test_data_setup):
     """Test track with same player detected as different jersey (OCR variance)."""
     session = test_data_setup['session']

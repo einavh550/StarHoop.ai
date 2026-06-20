@@ -100,7 +100,14 @@ def generate_highlights(
     )
     selected_event_types = set(event_types) if event_types else set(ALL_EVENT_TYPES)
 
-    events = derive_events(db, video_job_id, made_shot_window_sec=made_window)
+    events = derive_events(
+        db,
+        video_job_id,
+        made_shot_window_sec=made_window,
+        high_value_gating=settings.action_temporal_voting,
+        high_value_min_observations=settings.action_high_value_min_observations,
+        high_value_min_confidence=settings.action_high_value_min_confidence,
+    )
 
     scope = "all"
     if player_id is not None:
@@ -120,7 +127,13 @@ def generate_highlights(
     if not ranked:
         raise EmptyReelError(f"No highlight events qualified for job {video_job_id}")
 
-    ranked = dedup_overlapping_events(ranked, pad_pre_sec=pad_pre, pad_post_sec=pad_post)
+    ranked = dedup_overlapping_events(
+        ranked,
+        pad_pre_sec=pad_pre,
+        pad_post_sec=pad_post,
+        by_player=settings.dedup_by_player,
+        cross_type_suppression=settings.dedup_cross_type_suppression,
+    )
 
     reel = HighlightReel(
         video_job_id=video_job_id,

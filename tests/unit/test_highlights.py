@@ -11,6 +11,7 @@ from app.cv.highlights.events import (
     EVENT_LAYUP_DUNK,
     EVENT_POSSESSION,
     EVENT_SHOT_ATTEMPT,
+    EVENT_SHOT_BLOCK,
     FrameObservation,
     HighlightEvent,
     _apply_made_shot_flags,
@@ -73,6 +74,85 @@ def test_derive_frame_events_drops_short_segments() -> None:
     frames = [FakeFrame(0, 0.0, [_det("player-in-possession", track_id=9)])]
     events = _derive_frame_events(frames, player_by_track={}, max_gap_sec=0.6, min_observations=2)
     assert events == []
+
+
+def _block_frames(count: int, confidence: float) -> list[FakeFrame]:
+    return [
+        FakeFrame(i * 3, i * 0.1, [_det("player-shot-block", track_id=5, confidence=confidence)])
+        for i in range(count)
+    ]
+
+
+def test_high_value_gating_off_accepts_short_block() -> None:
+    # 3 observations clears the default min_observations=2, so without gating a
+    # short block event is emitted (current behavior).
+    frames = _block_frames(3, confidence=0.9)
+    events = _derive_frame_events(frames, player_by_track={5: 40}, max_gap_sec=0.6, min_observations=2)
+    assert len(events) == 1
+
+
+def test_high_value_gating_drops_short_block_on_observations() -> None:
+    # Same 3 observations, but gating requires >=4 for a high-value block.
+    frames = _block_frames(3, confidence=0.9)
+    events = _derive_frame_events(
+        frames,
+        player_by_track={5: 40},
+        max_gap_sec=0.6,
+        min_observations=2,
+        high_value_gating=True,
+        high_value_min_observations=4,
+        high_value_min_confidence=0.5,
+    )
+    assert events == []
+
+
+def test_high_value_gating_drops_low_confidence_block() -> None:
+    # Enough observations, but mean confidence below the high-value floor.
+    frames = _block_frames(5, confidence=0.3)
+    events = _derive_frame_events(
+        frames,
+        player_by_track={5: 40},
+        max_gap_sec=0.6,
+        min_observations=2,
+        high_value_gating=True,
+        high_value_min_observations=4,
+        high_value_min_confidence=0.5,
+    )
+    assert events == []
+
+
+def test_high_value_gating_keeps_strong_block() -> None:
+    frames = _block_frames(5, confidence=0.9)
+    events = _derive_frame_events(
+        frames,
+        player_by_track={5: 40},
+        max_gap_sec=0.6,
+        min_observations=2,
+        high_value_gating=True,
+        high_value_min_observations=4,
+        high_value_min_confidence=0.5,
+    )
+    assert len(events) == 1
+    assert events[0].event_type == EVENT_SHOT_BLOCK
+
+
+def test_high_value_gating_does_not_affect_possession() -> None:
+    # Possession is not high-value, so gating thresholds do not apply to it.
+    frames = [
+        FakeFrame(i * 3, i * 0.1, [_det("player-in-possession", track_id=9, confidence=0.3)])
+        for i in range(3)
+    ]
+    events = _derive_frame_events(
+        frames,
+        player_by_track={9: 50},
+        max_gap_sec=0.6,
+        min_observations=2,
+        high_value_gating=True,
+        high_value_min_observations=4,
+        high_value_min_confidence=0.5,
+    )
+    assert len(events) == 1
+    assert events[0].event_type == EVENT_POSSESSION
 
 
 def test_has_basket_within_window() -> None:
@@ -191,6 +271,110 @@ def test_dedup_keeps_non_overlapping_same_track() -> None:
     result = dedup_overlapping_events(ranked, pad_pre_sec=2.0, pad_post_sec=2.0)
 
     assert len(result) == 2
+
+
+def _event_player(
+    event_type: str,
+    start: float,
+    end: float,
+    *,
+    track_id: int,
+    player_id: int | None,
+    confidence: float = 0.7,
+) -> HighlightEvent:
+    return HighlightEvent(
+        event_type=event_type,
+        source="frame",
+        track_id=track_id,
+        mapped_player_id=player_id,
+        start_frame=int(start * 30),
+        end_frame=int(end * 30),
+        start_timestamp_sec=start,
+        end_timestamp_sec=end,
+        confidence=confidence,
+    )
+
+
+def test_dedup_by_track_keeps_fragmented_player_duplicate() -> None:
+    # Same physical player (40) fragmented across track 5 and 12. The default
+    # track-keyed dedup CANNOT see they are the same play, so both survive —
+    # this is the bug the by_player flag fixes.
+    a = _event_player(EVENT_POSSESSION, 10.0, 14.0, track_id=5, player_id=40, confidence=0.9)
+    b = _event_player(EVENT_POSSESSION, 14.4, 15.4, track_id=12, player_id=40, confidence=0.5)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(ranked, pad_pre_sec=2.0, pad_post_sec=2.0)
+
+    assert len(result) == 2  # current behavior: duplicate not caught
+
+
+def test_dedup_by_player_collapses_fragmented_player_duplicate() -> None:
+    # With by_player on, the cross-track duplicate of player 40 is removed but
+    # the higher-scored fragment is kept.
+    a = _event_player(EVENT_POSSESSION, 10.0, 14.0, track_id=5, player_id=40, confidence=0.9)
+    b = _event_player(EVENT_POSSESSION, 14.4, 15.4, track_id=12, player_id=40, confidence=0.5)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(
+        ranked, pad_pre_sec=2.0, pad_post_sec=2.0, by_player=True
+    )
+
+    assert len(result) == 1
+    assert result[0][0] is a
+
+
+def test_dedup_by_player_keeps_distinct_players_overlapping() -> None:
+    # Two different players overlapping at the same time must both survive.
+    a = _event_player(EVENT_POSSESSION, 10.0, 14.0, track_id=5, player_id=40)
+    b = _event_player(EVENT_POSSESSION, 10.5, 12.5, track_id=7, player_id=41)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(
+        ranked, pad_pre_sec=2.0, pad_post_sec=2.0, by_player=True
+    )
+
+    assert len(result) == 2
+
+
+def test_dedup_by_player_falls_back_to_track_when_unmapped() -> None:
+    # Unmapped events (player None) must still dedup by their own track only,
+    # never collapsing two different unmapped tracks together.
+    a = _event_player(EVENT_POSSESSION, 10.0, 14.0, track_id=5, player_id=None)
+    b = _event_player(EVENT_POSSESSION, 10.5, 12.5, track_id=7, player_id=None)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(
+        ranked, pad_pre_sec=2.0, pad_post_sec=2.0, by_player=True
+    )
+
+    assert len(result) == 2
+
+
+def test_dedup_cross_type_suppression_collapses_same_player_across_types() -> None:
+    # One play produces both a possession and a shot_block event for player 40 at
+    # the same time. Without cross-type suppression both survive; with it, only
+    # the highest-weighted (shot_block) is kept.
+    possession = _event_player(EVENT_POSSESSION, 10.0, 14.0, track_id=5, player_id=40, confidence=0.6)
+    block = _event_player(EVENT_SHOT_BLOCK, 11.0, 12.0, track_id=5, player_id=40, confidence=0.9)
+    ranked = sorted(
+        [(possession, score_event(possession)), (block, score_event(block))],
+        key=lambda pair: -pair[1],
+    )
+
+    without = dedup_overlapping_events(
+        ranked, pad_pre_sec=2.0, pad_post_sec=2.0, by_player=True
+    )
+    assert len(without) == 2
+
+    with_suppression = dedup_overlapping_events(
+        ranked,
+        pad_pre_sec=2.0,
+        pad_post_sec=2.0,
+        by_player=True,
+        cross_type_suppression=True,
+    )
+    assert len(with_suppression) == 1
+    assert with_suppression[0][0].event_type == EVENT_SHOT_BLOCK
 
 
 # --------------------------------------------------------------------------- #

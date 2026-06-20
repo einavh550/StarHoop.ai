@@ -74,49 +74,87 @@ def rank_events(
     return scored[: max(0, max_clips)]
 
 
+def _dedup_identity(event: HighlightEvent, *, by_player: bool) -> tuple[str, int | None]:
+    """Identity used to group events for deduplication.
+
+    With ``by_player`` we key on the mapped roster player (stable across SAM-2
+    track fragmentation) and only fall back to ``track_id`` when the player is
+    unknown. With ``by_player`` off the key is the raw ``track_id`` — exactly the
+    pre-remediation behavior.
+    """
+    if by_player and event.mapped_player_id is not None:
+        return ("player", event.mapped_player_id)
+    return ("track", event.track_id)
+
+
 def dedup_overlapping_events(
     ranked: list[tuple[HighlightEvent, float]],
     *,
     pad_pre_sec: float,
     pad_post_sec: float,
+    by_player: bool = False,
+    cross_type_suppression: bool = False,
 ) -> list[tuple[HighlightEvent, float]]:
-    """Remove lower-ranked events whose padded clip windows overlap with a
-    higher-ranked event of the same ``(event_type, track_id)``.
+    """Remove lower-ranked events whose padded clip windows overlap a
+    higher-ranked event of the same identity.
 
-    Events from different players or different event types are never suppressed
-    even if they share a time window — a layup and a possession by different
-    players at the same moment are genuinely distinct highlights.
+    Identity defaults to ``(event_type, track_id)`` (the original behavior). When
+    ``by_player`` is set the identity becomes ``(event_type, mapped_player_id)``
+    with a ``track_id`` fallback, so a player that SAM-2 fragmented into multiple
+    ``track_id``s no longer produces two near-identical clips of the same play —
+    the root cause of the duplicate-clip-in-reel bug.
 
-    The most common cause of intra-track overlap is detector drop-outs: a brief
-    gap (>``max_gap_sec``) in the detection stream splits one continuous
-    possession into two separate events.  With 2-second pre/post padding both
-    clips capture nearly identical footage, which appears as the same moment
-    repeated in the reel.
+    Events from different players (or, by default, different event types) are
+    never suppressed even if they share a time window — a layup and a possession
+    by different players at the same moment are genuinely distinct highlights.
+
+    When ``cross_type_suppression`` is set, overlapping clips of the SAME player
+    are additionally collapsed *across* event types, keeping only the
+    highest-weighted one (e.g. one play that produced both a ``possession`` and a
+    ``shot_block`` event for the same player at the same time).
+
+    The most common cause of intra-identity overlap is detector drop-outs: a
+    brief gap in the detection stream splits one continuous play into two events.
+    With 2-second pre/post padding both clips capture nearly identical footage,
+    which appears as the same moment repeated in the reel.
 
     Args:
         ranked: ``(event, score)`` pairs already sorted by descending score
             (as returned by :func:`rank_events`).
         pad_pre_sec: Pre-roll padding applied during clip extraction.
         pad_post_sec: Post-roll padding applied during clip extraction.
+        by_player: Key dedup on the mapped player instead of the raw track.
+        cross_type_suppression: Also collapse overlapping same-player clips
+            across event types (requires the by-player identity to be useful).
 
     Returns:
         The deduplicated subset in the same score order.
     """
     accepted: list[tuple[HighlightEvent, float]] = []
-    # Accepted padded windows keyed by (event_type, track_id).
-    windows: dict[tuple[str, int | None], list[tuple[float, float]]] = defaultdict(list)
+    # Accepted padded windows keyed by (event_type, identity) for intra-type dedup.
+    windows: dict[tuple[str, tuple[str, int | None]], list[tuple[float, float]]] = defaultdict(list)
+    # Accepted padded windows keyed by identity only, for cross-type suppression.
+    identity_windows: dict[tuple[str, int | None], list[tuple[float, float]]] = defaultdict(list)
 
     for event, score in ranked:
         win_start = event.start_timestamp_sec - pad_pre_sec
         win_end = event.end_timestamp_sec + pad_post_sec
-        key = (event.event_type, event.track_id)
+        identity = _dedup_identity(event, by_player=by_player)
+        key = (event.event_type, identity)
 
         duplicate = any(
             min(win_end, acc_end) - max(win_start, acc_start) > 0
             for acc_start, acc_end in windows[key]
         )
+        if not duplicate and cross_type_suppression:
+            duplicate = any(
+                min(win_end, acc_end) - max(win_start, acc_start) > 0
+                for acc_start, acc_end in identity_windows[identity]
+            )
+
         if not duplicate:
             accepted.append((event, score))
             windows[key].append((win_start, win_end))
+            identity_windows[identity].append((win_start, win_end))
 
     return accepted

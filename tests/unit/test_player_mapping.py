@@ -31,6 +31,90 @@ class TestPlayerMappingLogic:
         assert result[23].full_name == "Michael Jordan"
         assert result[5].full_name == "LeBron James"
     
+    def test_consolidate_tracks_by_player_merges_fragments(self):
+        """Fragmented tracks of one player collapse to one canonical track."""
+        p40 = Player(id=40, team_id=1, jersey_number=10, full_name="Colton Large")
+        p41 = Player(id=41, team_id=1, jersey_number=11, full_name="Owen Nunemaker")
+        aggregated = {
+            5: {"suggested_player": p40, "frame_count": 120, "confidence_max": 0.9},
+            12: {"suggested_player": p40, "frame_count": 30, "confidence_max": 0.6},
+            7: {"suggested_player": p41, "frame_count": 80, "confidence_max": 0.8},
+            99: {"suggested_player": None, "frame_count": 50, "confidence_max": 0.4},
+        }
+
+        canonical = PlayerMapper.consolidate_tracks_by_player(aggregated)
+
+        # Tracks 5 and 12 (player 40) both point at the higher-frame track 5.
+        assert canonical[5] == 5
+        assert canonical[12] == 5
+        # Distinct player and unmapped track are untouched.
+        assert canonical[7] == 7
+        assert canonical[99] == 99
+
+    def test_consolidate_tracks_by_player_breaks_ties_on_confidence(self):
+        """Equal frame counts fall back to the higher max confidence."""
+        p40 = Player(id=40, team_id=1, jersey_number=10, full_name="Colton Large")
+        aggregated = {
+            5: {"suggested_player": p40, "frame_count": 50, "confidence_max": 0.6},
+            12: {"suggested_player": p40, "frame_count": 50, "confidence_max": 0.95},
+        }
+
+        canonical = PlayerMapper.consolidate_tracks_by_player(aggregated)
+
+        assert canonical[5] == 12
+        assert canonical[12] == 12
+
+    def test_select_coached_cluster_picks_best_roster_match(self):
+        """Coached cluster is the one whose tracks match the roster the most."""
+        p1 = Player(id=1, team_id=10, jersey_number=10, full_name="A")
+        p2 = Player(id=2, team_id=10, jersey_number=11, full_name="B")
+        result = {
+            5: {"suggested_player": p1, "frame_count": 100},
+            6: {"suggested_player": p2, "frame_count": 80},
+            9: {"suggested_player": None, "frame_count": 200},  # opponent #10 (no match)
+        }
+        track_team = {5: 0, 6: 0, 9: 1}
+
+        assert PlayerMapper.select_coached_cluster(result, track_team) == 0
+
+    def test_apply_opponent_gate_nulls_other_cluster(self):
+        """A roster-jersey collision on the opponent cluster maps to NULL."""
+        p10 = Player(id=1, team_id=10, jersey_number=10, full_name="Our #10")
+        opponent10 = Player(id=1, team_id=10, jersey_number=10, full_name="Our #10")
+        result = {
+            5: {"suggested_player": p10, "frame_count": 100, "match_rating": "high"},
+            9: {"suggested_player": opponent10, "frame_count": 90, "match_rating": "high"},
+        }
+        # Cluster 0 has more roster-matched frames -> coached. Cluster 1 = opponent.
+        track_team = {5: 0, 9: 1}
+
+        PlayerMapper.apply_opponent_gate(result, track_team)
+
+        assert result[5]["suggested_player"] is p10
+        assert result[9]["suggested_player"] is None
+        assert result[9]["match_rating"] == "no_match"
+
+    def test_apply_opponent_gate_noop_when_no_matches(self):
+        result = {5: {"suggested_player": None, "frame_count": 10}}
+        track_team = {5: 1}
+        # No roster matches -> coached cluster unknown -> nothing changes.
+        PlayerMapper.apply_opponent_gate(result, track_team)
+        assert result[5]["suggested_player"] is None
+
+    def test_apply_opponent_gate_keeps_unknown_cluster_tracks(self):
+        p10 = Player(id=1, team_id=10, jersey_number=10, full_name="Our #10")
+        keep = Player(id=2, team_id=10, jersey_number=11, full_name="Our #11")
+        result = {
+            5: {"suggested_player": p10, "frame_count": 100, "match_rating": "high"},
+            7: {"suggested_player": keep, "frame_count": 50, "match_rating": "high"},
+        }
+        # Track 7 has no known cluster -> must NOT be gated.
+        track_team = {5: 0}
+
+        PlayerMapper.apply_opponent_gate(result, track_team)
+
+        assert result[7]["suggested_player"] is keep
+
     def test_rate_match_high_confidence(self):
         """Test high confidence match rating."""
         rating = PlayerMapper._rate_match(confidence_mean=0.85, frame_count=10)
