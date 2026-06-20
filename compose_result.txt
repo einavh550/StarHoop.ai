@@ -1,0 +1,17 @@
+﻿{
+    "composed_reel_id":  12,
+    "reel_id":  5,
+    "job_id":  16,
+    "team_id":  1,
+    "player_id":  5,
+    "status":  "completed",
+    "aspect_ratio":  "16:9",
+    "music_track":  "assets/music/3e2a553513d74b7ca24b140344f728ad_ES_Legends_Awaken_-_Dream_Cave.mp3",
+    "has_intro":  true,
+    "has_stats":  true,
+    "has_watermark":  true,
+    "total_duration_sec":  55.756,
+    "output_filename":  "composed_12_16x9.mp4",
+    "download_url":  "/api/videos/16/highlights/5/compose/12/download",
+    "created_at":  "2026-06-16T21:19:24.098038Z"
+}

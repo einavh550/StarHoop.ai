@@ -1,6 +1,6 @@
 # StarHoop.ai 🏀 — AI-Powered Basketball Analytics for Youth Coaches
 
-**Status:** Milestones 1–5 complete and tested. Milestone 6 is the next implementation target.
+**Status:** Milestones 1–6 complete and tested. Fine-tuning and Android app integration are the next targets.
 
 ---
 
@@ -87,20 +87,38 @@ StarHoop.ai/
 
 ---
 
-## Milestone 6 (Next): Professional Personalized Reel Composition
+### ✅ Milestone 6: Professional Personalized Reel Composition
+**Goal achieved:** Turn M5 raw per-player reels into polished, share-ready highlight products.
 
-**Goal:** Turn M5 raw per-player reels into polished, share-ready highlight products.
+**Implemented scope:**
+- Intro/title card with player identity, team/season metadata, and optional stats block.
+- Rich overlays: per-clip lower-thirds (player name/number + event chip) burned onto every clip.
+- Visual composition polish: broadcast-style color grade, sharpening, and timed fade transitions.
+- Music bed integration with game-audio ducking and loudnorm mastering.
+- Branding/watermark package (corner logo, configurable opacity).
+- 16:9 (landscape) and 9:16 (vertical social) export profiles.
+- Persistence layer: `composed_reels` table with full status lifecycle (`processing → completed/failed`).
+- Bug fix: temporal deduplication of overlapping clips from the same player/event-type (e.g. duplicate possession segments caused by brief detector drop-outs).
 
-**Planned implementation scope:**
-- Intro/title card with player identity and game metadata.
-- Rich overlays (player name/number, event chips, optional stats bar).
-- Visual composition polish (timed transitions and pacing).
-- Music bed integration (with safe level control/ducking).
-- Branding/watermark package and export profiles.
+**Primary entry point:** `POST /api/videos/{job_id}/highlights/{reel_id}/compose`
 
-**Design boundary:**
-- Filtering and event selection remain in M5.
-- M6 focuses on presentation/composition quality on top of M5 outputs.
+---
+
+## Next Steps: Fine-Tuning & Android Integration
+
+> The core pipeline (M1–M6) is fully operational. The remaining work falls into two tracks:
+
+**Backend fine-tuning:**
+- Further polish on composed reel aesthetics (fonts, color themes, transition timing).
+- Improved made/missed shot outcome detection.
+- Production hardening (authz, rate limiting, quotas, observability, billing).
+
+**Android app integration:**
+- Connect the Android (Kotlin) mobile frontend to the live API.
+- Video upload flow from device camera roll → `POST /api/videos/upload`.
+- Job status polling and progress display.
+- In-app highlight reel playback and download.
+- Player roster management (add/edit players, upload photos).
 
 ---
 
@@ -119,6 +137,9 @@ StarHoop.ai/
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}` | Reel metadata/status | ✅ Live |
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}/download` | Download stitched reel | ✅ Live |
 | `GET` | `/api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download` | Download single clip | ✅ Live |
+| `POST` | `/api/videos/{job_id}/highlights/{reel_id}/compose` | Create M6 composed reel | ✅ Live |
+| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/compose/{composed_id}` | Composed reel status | ✅ Live |
+| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/compose/{composed_id}/download` | Download composed reel | ✅ Live |
 | `POST` | `/api/assets/music` | Upload a music track for M6 composition | ✅ Ready |
 | `POST` | `/api/assets/branding/logo` | Upload the StarHoop.ai brand logo | ✅ Ready |
 | `POST` | `/api/assets/players/photo` | Upload a player photo and attach it to `photo_url` | ✅ Ready |
@@ -138,6 +159,9 @@ StarHoop.ai/
 **M5 tables:**
 - **highlight_reels** — Reel artifacts (`scope`, `player_id`, output metadata).
 - **highlight_clips** — Per-clip event metadata and clip artifact paths.
+
+**M6 tables:**
+- **composed_reels** — Polished composition artifacts (`aspect_ratio`, `music_track`, `has_intro`, `has_stats`, `has_watermark`, output metadata, status lifecycle).
 
 ---
 
@@ -254,8 +278,8 @@ Invoke-WebRequest -Uri ("http://localhost:8000/api/videos/16/highlights/" + $pla
 
 ## Known Limitations & Next Work
 
-- M6 composition layer not implemented yet (next milestone).
-- Advanced made/missed outcome semantics can still be improved.
+- Backend fine-tuning still in progress (aesthetics, shot-outcome accuracy, production hardening).
+- Android (Kotlin) mobile frontend integration not yet started.
 - Multi-camera and live-stream operation are out of current scope.
 - Production hardening opportunities remain (authz, quotas, observability, billing).
 
@@ -278,4 +302,4 @@ Invoke-WebRequest -Uri ("http://localhost:8000/api/videos/16/highlights/" + $pla
 
 ---
 
-**Last updated:** June 15, 2026 — Milestones 1–5 complete, Milestone 6 next.
+**Last updated:** June 20, 2026 — Milestones 1–6 complete. Fine-tuning and Android integration next.

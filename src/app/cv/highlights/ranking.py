@@ -7,6 +7,8 @@ Events are sorted by descending score and capped at ``max_clips``.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from app.cv.highlights.events import (
     EVENT_BALL_IN_BASKET,
     EVENT_JUMP_SHOT,
@@ -70,3 +72,51 @@ def rank_events(
     scored = [(event, score_event(event)) for event in filtered]
     scored.sort(key=lambda pair: (-pair[1], pair[0].start_timestamp_sec, pair[0].start_frame))
     return scored[: max(0, max_clips)]
+
+
+def dedup_overlapping_events(
+    ranked: list[tuple[HighlightEvent, float]],
+    *,
+    pad_pre_sec: float,
+    pad_post_sec: float,
+) -> list[tuple[HighlightEvent, float]]:
+    """Remove lower-ranked events whose padded clip windows overlap with a
+    higher-ranked event of the same ``(event_type, track_id)``.
+
+    Events from different players or different event types are never suppressed
+    even if they share a time window — a layup and a possession by different
+    players at the same moment are genuinely distinct highlights.
+
+    The most common cause of intra-track overlap is detector drop-outs: a brief
+    gap (>``max_gap_sec``) in the detection stream splits one continuous
+    possession into two separate events.  With 2-second pre/post padding both
+    clips capture nearly identical footage, which appears as the same moment
+    repeated in the reel.
+
+    Args:
+        ranked: ``(event, score)`` pairs already sorted by descending score
+            (as returned by :func:`rank_events`).
+        pad_pre_sec: Pre-roll padding applied during clip extraction.
+        pad_post_sec: Post-roll padding applied during clip extraction.
+
+    Returns:
+        The deduplicated subset in the same score order.
+    """
+    accepted: list[tuple[HighlightEvent, float]] = []
+    # Accepted padded windows keyed by (event_type, track_id).
+    windows: dict[tuple[str, int | None], list[tuple[float, float]]] = defaultdict(list)
+
+    for event, score in ranked:
+        win_start = event.start_timestamp_sec - pad_pre_sec
+        win_end = event.end_timestamp_sec + pad_post_sec
+        key = (event.event_type, event.track_id)
+
+        duplicate = any(
+            min(win_end, acc_end) - max(win_start, acc_start) > 0
+            for acc_start, acc_end in windows[key]
+        )
+        if not duplicate:
+            accepted.append((event, score))
+            windows[key].append((win_start, win_end))
+
+    return accepted

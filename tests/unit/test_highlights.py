@@ -19,7 +19,7 @@ from app.cv.highlights.events import (
     _split_segments,
 )
 from app.cv.highlights.ffmpeg import FFmpegError
-from app.cv.highlights.ranking import rank_events, score_event
+from app.cv.highlights.ranking import dedup_overlapping_events, rank_events, score_event
 
 
 @dataclass
@@ -130,6 +130,67 @@ def test_rank_events_filters_and_caps() -> None:
 def test_rank_events_min_confidence_drops_low() -> None:
     events = [_event(EVENT_SHOT_ATTEMPT, confidence=0.1)]
     assert rank_events(events, max_clips=10, min_confidence=0.5) == []
+
+
+# --------------------------------------------------------------------------- #
+# Deduplication
+# --------------------------------------------------------------------------- #
+def _event_at(
+    event_type: str,
+    start: float,
+    end: float,
+    track_id: int = 1,
+    confidence: float = 0.7,
+) -> HighlightEvent:
+    return HighlightEvent(
+        event_type=event_type,
+        source="frame",
+        track_id=track_id,
+        mapped_player_id=None,
+        start_frame=int(start * 30),
+        end_frame=int(end * 30),
+        start_timestamp_sec=start,
+        end_timestamp_sec=end,
+        confidence=confidence,
+    )
+
+
+def test_dedup_removes_overlapping_lower_ranked_same_track() -> None:
+    # Two possession events for the same track — gap of 0.7 s splits them but
+    # with 2 s padding the windows heavily overlap.
+    better = _event_at(EVENT_POSSESSION, start=10.0, end=14.0, track_id=5, confidence=0.9)
+    worse = _event_at(EVENT_POSSESSION, start=14.7, end=18.0, track_id=5, confidence=0.5)
+    # better scores higher; worse should be dropped (windows overlap).
+    ranked = [(better, score_event(better)), (worse, score_event(worse))]
+
+    result = dedup_overlapping_events(ranked, pad_pre_sec=2.0, pad_post_sec=2.0)
+
+    assert len(result) == 1
+    assert result[0][0] is better
+
+
+def test_dedup_keeps_same_type_different_tracks() -> None:
+    # Two players both in possession at the same time — different tracks, so
+    # neither suppresses the other even though windows overlap.
+    a = _event_at(EVENT_POSSESSION, start=10.0, end=12.0, track_id=5)
+    b = _event_at(EVENT_POSSESSION, start=10.5, end=12.5, track_id=7)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(ranked, pad_pre_sec=2.0, pad_post_sec=2.0)
+
+    assert len(result) == 2
+
+
+def test_dedup_keeps_non_overlapping_same_track() -> None:
+    # Two possession events far enough apart that even with padding they do not
+    # overlap — both must be kept.
+    a = _event_at(EVENT_POSSESSION, start=5.0, end=6.0, track_id=1)
+    b = _event_at(EVENT_POSSESSION, start=20.0, end=21.0, track_id=1)
+    ranked = [(a, score_event(a)), (b, score_event(b))]
+
+    result = dedup_overlapping_events(ranked, pad_pre_sec=2.0, pad_post_sec=2.0)
+
+    assert len(result) == 2
 
 
 # --------------------------------------------------------------------------- #

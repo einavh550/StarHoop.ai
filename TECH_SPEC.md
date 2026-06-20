@@ -74,7 +74,7 @@ StarHoop.ai/
 ├── pytest.ini                    # Pytest configuration (testpaths, pythonpath)
 ├── requirements.txt              # Python dependencies (pinned versions)
 ├── .env.example                  # Environment variable template
-├── .env                          # Local environment (git-ignored, user-configured)
+├──                           # Local environment (git-ignored, user-configured)
 ├── .gitignore                    # VCS exclusions
 ├── README.md                     # User-facing project documentation
 ├── QUICK_REFERENCE.md            # Developer command reference
@@ -208,7 +208,7 @@ DELETE coach → cascade to teams → cascade to players → cascade to highligh
 
 ### 5.1 Environment Variables
 
-Loaded via `pydantic-settings` from `.env` file or system environment.
+Loaded via `pydantic-settings` from `` file or system environment.
 
 | Variable            | Type   | Default                                          | Description                     |
 |---------------------|--------|--------------------------------------------------|---------------------------------|

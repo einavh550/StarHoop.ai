@@ -31,7 +31,7 @@ from app.cv.highlights.clips import (
 )
 from app.cv.highlights.events import ALL_EVENT_TYPES, HighlightEvent, derive_events
 from app.cv.highlights.ffmpeg import probe_duration
-from app.cv.highlights.ranking import rank_events
+from app.cv.highlights.ranking import dedup_overlapping_events, rank_events
 from app.cv.storage import ensure_storage_directory
 from app.db.models import HighlightClip, HighlightReel, Player, VideoJob
 
@@ -119,6 +119,8 @@ def generate_highlights(
     )
     if not ranked:
         raise EmptyReelError(f"No highlight events qualified for job {video_job_id}")
+
+    ranked = dedup_overlapping_events(ranked, pad_pre_sec=pad_pre, pad_post_sec=pad_post)
 
     reel = HighlightReel(
         video_job_id=video_job_id,
