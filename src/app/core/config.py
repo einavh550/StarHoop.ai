@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     ocr_min_crop_size_px: int = 12
     ocr_resize_height_px: int = 64
 
-    max_upload_size_mb: int = 600
+    max_upload_size_mb: int = 1536
+    # Frame-rate ceiling applied at ingest before the video is mirrored to R2.
+    # Videos above this fps (e.g. 60 fps phone recordings) are re-encoded to
+    # this rate, roughly halving frame count, R2 transfer size, and Modal cost.
+    # Set to 0 to disable fps capping entirely.
+    ingest_max_fps: int = 30
     video_storage_dir: str = "uploads/videos"
     annotated_export_dir: str = "uploads/annotated_exports"
     asset_upload_dir: str = "uploads/assets"

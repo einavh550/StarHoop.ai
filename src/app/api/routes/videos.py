@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import SIGNATURE_HEADER, verify_signature
+import logging
+
 from app.cv import orchestration, r2_storage
+from app.cv.transcode import TranscodeError, cap_fps
+
+logger = logging.getLogger(__name__)
 from app.cv.schemas import (
     ColabDetectionBatch,
     JobStatusUpdate,
@@ -69,6 +74,20 @@ async def upload_video(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # Cap the frame rate before mirroring to R2 so that both the stored file
+    # and the Modal workers operate on a smaller, cheaper video. Non-fatal: if
+    # ffmpeg is unavailable (e.g. local dev without the binary) the upload
+    # proceeds with the original file and a warning is logged.
+    if settings.ingest_max_fps > 0:
+        try:
+            capped_path = await asyncio.to_thread(cap_fps, storage_path, settings.ingest_max_fps)
+            if str(capped_path) != str(Path(storage_path).resolve()):
+                Path(storage_path).unlink(missing_ok=True)
+                storage_path = str(capped_path)
+                logger.info("ingest fps_cap: %s capped to %d fps → %s", source_filename, settings.ingest_max_fps, storage_path)
+        except TranscodeError as exc:
+            logger.warning("ingest fps_cap skipped for %s: %s", source_filename, exc)
 
     job = VideoJob(
         team_id=team_id,

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.cv.mapping import PlayerMapper
 from app.cv.storage import ensure_storage_directory
+from app.cv.transcode import TranscodeError, normalize_video
 from app.db.models import DetectionFrame, JerseyDetection, Player, VideoJob
 
 logger = logging.getLogger(__name__)
@@ -268,10 +269,16 @@ def render_annotated_export(
 
     fps = float(capture.get(cv2.CAP_PROP_FPS) or settings.cv_target_fps or 30)
     frame_height, frame_width = first_frame.shape[:2]
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame_width, frame_height))
+
+    # OpenCV's headless build has no H.264 encoder (licensing), so we write the
+    # frames with the always-available ``mp4v`` codec to a temp file and then
+    # transcode that to H.264 (avc1) with ffmpeg below. The final file is the
+    # broadly-playable one (Windows Media Player, etc.).
+    raw_output_path = export_root / f"{export_id}_raw.mp4"
+    writer = cv2.VideoWriter(str(raw_output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame_width, frame_height))
     if not writer.isOpened():
         capture.release()
-        raise ValueError(f"Could not create export writer at {output_path}")
+        raise ValueError(f"Could not create export writer at {raw_output_path}")
 
     # Bridge subsampling gaps up to ~0.5s and keep a short ~0.15s tail so boxes
     # stay smooth and stable instead of flickering on un-sampled frames.
@@ -304,12 +311,25 @@ def render_annotated_export(
             if not success:
                 break
     except Exception:
+        raw_output_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
         metadata_path.unlink(missing_ok=True)
         raise
     finally:
         capture.release()
         writer.release()
+
+    # Transcode the raw mp4v file to H.264 so it plays everywhere. If ffmpeg is
+    # unavailable we fall back to the mp4v file rather than failing the export.
+    try:
+        normalize_video(raw_output_path, output_path)
+        raw_output_path.unlink(missing_ok=True)
+    except TranscodeError:
+        logger.warning(
+            "ffmpeg unavailable; annotated export %s left as mp4v (less compatible)",
+            export_id,
+        )
+        raw_output_path.replace(output_path)
 
     metadata = {
         "export_id": export_id,
