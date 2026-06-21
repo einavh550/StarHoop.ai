@@ -50,19 +50,47 @@ def _client():
         aws_secret_access_key=settings.r2_secret_access_key,
         # R2 ignores the region but boto3 requires one; "auto" is the convention.
         region_name="auto",
-        config=Config(signature_version="s3v4"),
+        config=Config(
+            signature_version="s3v4",
+            # Retry up to 5 times on transient connection/SSL errors. The default
+            # is 3 retries with legacy mode; switching to adaptive gives smarter
+            # back-off when R2 resets a connection mid-multipart-upload.
+            retries={"max_attempts": 5, "mode": "adaptive"},
+            # Per-connection timeouts. Large video uploads can stall when a
+            # connection is silently dropped; these ensure boto3 detects the
+            # hang and retries rather than waiting forever.
+            connect_timeout=60,
+            read_timeout=300,
+        ),
     )
 
 
 def upload_file(local_path: str, key: str, content_type: str | None = None) -> str:
     """Upload ``local_path`` to the R2 bucket under ``key`` and return the key."""
+    import boto3  # local import: only needed when orchestration is enabled
+    from boto3.s3.transfer import TransferConfig
+
     client = _client()
     resolved_content_type = content_type or _guess_content_type(local_path)
+
+    # Use larger parts (64 MB) and fewer parallel threads (4) compared to the
+    # boto3 defaults (8 MB / 10 threads). Larger parts mean fewer SSL handshakes
+    # and less exposure to mid-transfer connection resets on long uploads. The
+    # retry config on the client handles the occasional EOF that still slips
+    # through.
+    transfer_cfg = TransferConfig(
+        multipart_threshold=64 * 1024 * 1024,   # 64 MB – below this uses single PUT
+        multipart_chunksize=64 * 1024 * 1024,   # 64 MB per part
+        max_concurrency=4,
+        use_threads=True,
+    )
+
     client.upload_file(
         Filename=local_path,
         Bucket=settings.r2_bucket,
         Key=key,
         ExtraArgs={"ContentType": resolved_content_type},
+        Config=transfer_cfg,
     )
     return key
 

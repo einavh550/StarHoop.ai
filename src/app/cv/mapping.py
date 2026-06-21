@@ -118,9 +118,10 @@ class PlayerMapper:
                     if jersey_conf >= settings.ocr_confidence_strict:
                         jersey_aggregates[track_id]['high_confidence_votes'].append(jersey_num)
                     # Remember the SigLIP team cluster for the single-team gate.
-                    team_id = detection.get('team_id')
-                    if team_id is not None:
-                        jersey_aggregates[track_id]['team_ids'].append(int(team_id))
+                    # Use det_team_id to avoid shadowing the coached team_id parameter.
+                    det_team_id = detection.get('team_id')
+                    if det_team_id is not None:
+                        jersey_aggregates[track_id]['team_ids'].append(int(det_team_id))
         
         if not jersey_aggregates:
             logger.warning(f"No jersey detections found for job {video_job_id}")

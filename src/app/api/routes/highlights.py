@@ -96,7 +96,7 @@ def _reel_to_response(team_id: int, reel: HighlightReel) -> HighlightReelRespons
 )
 def extract_highlights(
     job_id: int,
-    source: Annotated[str, Query()] = "clean",
+    source: Annotated[str, Query()] = "annotated",
     player_id: Annotated[int | None, Query()] = None,
     max_clips: Annotated[int | None, Query(ge=1, le=200)] = None,
     min_confidence: Annotated[float, Query(ge=0.0, le=1.0)] = 0.0,
