@@ -7,6 +7,7 @@ from app.api.routes.mapping_diagnostics import router as mapping_diagnostics_rou
 from app.api.routes.actions import router as actions_router
 from app.api.routes.health import router as health_router
 from app.api.routes.player_mapping import router as player_mapping_router
+from app.api.routes.teams import router as teams_router
 from app.api.routes.videos import router as videos_router
 
 
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
     app.include_router(actions_router)
     app.include_router(highlights_router)
     app.include_router(assets_router)
+    app.include_router(teams_router)
     return app
 
 

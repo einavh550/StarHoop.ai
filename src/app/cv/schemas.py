@@ -3,6 +3,23 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class PlayerDto(BaseModel):
+    player_id: int
+    team_id: int
+    jersey_number: int
+    full_name: str
+    photo_url: str | None = None
+    birth_year: int | None = None
+
+
+class TeamDto(BaseModel):
+    team_id: int
+    name: str
+    season: str
+    logo_url: str | None = None
+    players: list[PlayerDto] = Field(default_factory=list)
+
+
 class BoundingBox(BaseModel):
     x1: float
     y1: float

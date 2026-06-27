@@ -185,6 +185,44 @@ async def upload_video(
     )
 
 
+@router.get("", response_model=list[VideoJobStatusResponse])
+def list_video_jobs(
+    team_id: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+) -> list[VideoJobStatusResponse]:
+    """List all video jobs, optionally filtered by team_id, newest first.
+
+    Supports the Android dashboard which has no local job-ID storage.
+    """
+    query = db.query(VideoJob)
+    if team_id is not None:
+        query = query.filter(VideoJob.team_id == team_id)
+    jobs = query.order_by(VideoJob.id.desc()).limit(limit).all()
+    return [
+        VideoJobStatusResponse(
+            job_id=job.id,
+            team_id=job.team_id,
+            status=job.status,
+            source_filename=job.source_filename,
+            tracker_name=job.tracker_name,
+            model_name=job.model_name,
+            total_frames=job.total_frames,
+            processed_frames=job.processed_frames,
+            progress_percent=_calculate_progress_percent(job.total_frames, job.processed_frames),
+            processing_duration_sec=_calculate_processing_duration_sec(job.created_at, job.updated_at),
+            throughput_fps=_calculate_throughput_fps(
+                job.processed_frames,
+                _calculate_processing_duration_sec(job.created_at, job.updated_at),
+            ),
+            error_message=job.error_message,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
+        for job in jobs
+    ]
+
+
 @router.get("/{job_id}", response_model=VideoJobStatusResponse)
 def get_video_job_status(job_id: int, db: Session = Depends(get_db)) -> VideoJobStatusResponse:
     job = db.get(VideoJob, job_id)
