@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     # track and therefore a candidate for re-prompting.
     periodic_redetect_match_iou: float = 0.3
 
+    # --- Auth / JWT -------------------------------------------------------
+    # Secret used to sign JWT tokens. Change this to a long random string in
+    # production. Can be set via the JWT_SECRET_KEY env var.
+    jwt_secret_key: str = "change-me-in-production"
+    # How many days a token stays valid. 30 days is comfortable for a mobile
+    # app; reduce in production if you want stricter session lifetimes.
+    jwt_expire_days: int = 30
+    # Algorithm for JWT signing.
+    jwt_algorithm: str = "HS256"
+
     # --- Milestone 4: Modal orchestration ---------------------------------
     # When enabled, /upload mirrors the saved video to Cloudflare R2 and spawns
     # the deployed Modal job to process it on GPU. When disabled (default), the

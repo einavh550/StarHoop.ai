@@ -3,6 +3,64 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+from pydantic import EmailStr
+
+
+# ---------------------------------------------------------------------------
+# Auth schemas
+# ---------------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    coach_id: int
+    display_name: str
+    email: str
+
+
+class CoachProfileResponse(BaseModel):
+    coach_id: int
+    display_name: str
+    email: str
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Team schemas
+# ---------------------------------------------------------------------------
+
+class CreateTeamRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    season: str = Field(default="2025-26", max_length=20)
+    color: str | None = Field(default=None, max_length=20)
+    logo_url: str | None = None
+
+
+class TeamDto(BaseModel):
+    team_id: int
+    coach_id: int
+    name: str
+    season: str
+    color: str | None = None
+    logo_url: str | None = None
+    players: list["PlayerDto"] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Player schemas
+# ---------------------------------------------------------------------------
+
 class PlayerDto(BaseModel):
     player_id: int
     team_id: int
@@ -12,12 +70,18 @@ class PlayerDto(BaseModel):
     birth_year: int | None = None
 
 
-class TeamDto(BaseModel):
-    team_id: int
-    name: str
-    season: str
-    logo_url: str | None = None
-    players: list[PlayerDto] = Field(default_factory=list)
+class CreatePlayerRequest(BaseModel):
+    jersey_number: int = Field(ge=0, le=99)
+    full_name: str = Field(min_length=1, max_length=120)
+    photo_url: str | None = None
+    birth_year: int | None = None
+
+
+class UpdatePlayerRequest(BaseModel):
+    jersey_number: int | None = Field(default=None, ge=0, le=99)
+    full_name: str | None = Field(default=None, min_length=1, max_length=120)
+    photo_url: str | None = None
+    birth_year: int | None = None
 
 
 class BoundingBox(BaseModel):

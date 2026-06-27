@@ -16,6 +16,7 @@ class Team(Base):
     coach_id: Mapped[int] = mapped_column(ForeignKey("coaches.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
     season: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
