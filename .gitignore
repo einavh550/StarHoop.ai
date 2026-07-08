@@ -19,3 +19,5 @@ htmlcov/
 uploads/videos/
 
 *.log
+*_flow.txt
+sh_compose*.json

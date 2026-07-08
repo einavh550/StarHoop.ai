@@ -1,305 +1,207 @@
-# StarHoop.ai 🏀 — AI-Powered Basketball Analytics for Youth Coaches
+# StarHoop.ai
 
-**Status:** Milestones 1–6 complete and tested. Fine-tuning and Android app integration are the next targets.
+**AI-powered basketball highlight platform for coaches.**
 
----
-
-## Overview
-
-**StarHoop.ai** is an AI-powered platform that automates basketball game analysis. Coaches upload a raw game video -> the system automatically detects, tracks, and identifies players by jersey number and team -> coaches receive structured, queryable game intelligence plus generated highlight media.
-
-**Tech Stack:**
-- **Backend:** FastAPI (Python) + PostgreSQL + SQLAlchemy ORM
-- **GPU Inference:** Modal serverless (RF-DETR, SAM-2, SigLIP, SmolVLM2)
-- **Storage:** Cloudflare R2 (S3-compatible)
-- **Containerization:** Docker + Docker Compose
-- **Video Processing:** ffmpeg
-- **Mobile Frontend:** Android (Kotlin) — planned
+Upload a game video. The system automatically detects every player, reads their jersey numbers, tracks their movements, recognises on-court events, and generates personalised highlight reels — one per player, polished and ready to share.
 
 ---
 
-## Project Structure
+## What it does
+
+A coach uploads a raw game video from their Android phone. The backend:
+
+1. Stores the video and creates a processing job
+2. Sends it to a GPU worker (Modal serverless) running RF-DETR + SAM-2 + SigLIP + PaddleOCR
+3. Detects players frame-by-frame, tracks them across the game, reads jersey numbers, and classifies team membership
+4. Maps every tracked jersey to the coach's roster
+5. Recognises highlight events: jump shots, layups, blocks, possessions, made/missed shots
+6. Extracts per-player highlight clips and stitches them into a reel
+7. Composes a polished reel with intro card, lower-thirds, music bed, and team branding
+8. Serves the final reel to the Android app for playback and download
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|-------|-----------|
+| API | FastAPI (Python 3.12) |
+| Database | PostgreSQL 16 + SQLAlchemy 2 + Alembic |
+| GPU inference | Modal serverless (RF-DETR, SAM-2, SigLIP, PaddleOCR) |
+| Object storage | Cloudflare R2 (S3-compatible) |
+| Video processing | ffmpeg |
+| Containerisation | Docker + Docker Compose |
+| Auth | JWT (HS256, 30-day tokens) |
+| Mobile frontend | Android (Kotlin + Jetpack Compose) — in active development |
+
+---
+
+## Project structure
 
 ```
 StarHoop.ai/
-├── src/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app entry point
-│   │   ├── db/models/           # SQLAlchemy ORM models (VideoJob, DetectionFrame, etc.)
-│   │   ├── api/routes/          # API endpoints
-│   │   ├── cv/                  # Computer vision + media pipeline
-│   │   │   ├── actions.py       # Action recognition
-│   │   │   ├── annotated_export.py  # Annotated full-video rendering
-│   │   │   ├── highlights/      # M5 clip extraction/stitching modules
-│   │   │   └── mapping.py       # Jersey -> player mapping
-│   │   └── core/                # Config/security/runtime helpers
-├── alembic/versions/            # DB schema versions
-├── modal_app/                   # Modal GPU app image + workers
+├── src/app/
+│   ├── main.py                  # FastAPI app factory + router registration
+│   ├── api/routes/              # HTTP endpoints
+│   │   ├── auth.py              # Register / login / profile
+│   │   ├── videos.py            # Upload, status, list, cancel
+│   │   ├── highlights.py        # Extract, compose, download
+│   │   ├── teams.py             # Team + roster CRUD
+│   │   ├── player_mapping.py    # Jersey → roster mapping
+│   │   ├── actions.py           # Action recognition trigger
+│   │   ├── exports.py           # Annotated full-video export
+│   │   └── assets.py            # Music / branding / player photo upload
+│   ├── cv/                      # Computer-vision & media pipeline
+│   │   ├── mapping.py           # Jersey aggregation + roster matching
+│   │   ├── actions.py           # Heuristic shot-attempt detection
+│   │   ├── highlights/          # Event derivation, clip extraction, composition
+│   │   ├── annotated_export.py  # Bounding-box overlay renderer
+│   │   ├── r2_storage.py        # Cloudflare R2 upload/download
+│   │   ├── orchestration.py     # Modal job spawning + chunked fan-out
+│   │   └── schemas.py           # Pydantic request/response models
+│   ├── db/
+│   │   ├── models/              # SQLAlchemy ORM models
+│   │   └── session.py           # Engine + session factory
+│   └── core/
+│       ├── config.py            # All settings (pydantic-settings)
+│       ├── auth.py              # JWT utilities + FastAPI dependency
+│       └── security.py          # HMAC webhook signing
+├── alembic/versions/            # Database migration history
+├── modal_app/                   # Modal GPU worker image + inference code
+├── tests/                       # Unit and integration test suite
+├── tools/                       # CLI helpers (colab export, ingest test)
+├── docs/                        # Guides, specs, and reference documents
 ├── docker-compose.yml           # PostgreSQL + API services
-├── Dockerfile                   # API image (includes ffmpeg)
-├── STARTUP_GUIDE.md             # Boot sequence and ops commands
-└── README.md                    # This file
+├── Dockerfile                   # API image (Python 3.12-slim + ffmpeg)
+├── requirements.txt             # Python dependencies (pinned)
+├── .env.example                 # Environment variable template
+└── pytest.ini                   # Test configuration
 ```
 
 ---
 
-## Milestones Implemented & Tested (1–5)
+## Getting started
 
-### ✅ Milestone 1: Object Detection (RF-DETR)
-- Detects players, ball, rim, jersey numbers, and key action classes.
-- Runs on Modal GPU.
-- **Output:** Per-frame detections with class names, confidences, boxes, and trackable entities.
+### Prerequisites
 
-### ✅ Milestone 2: Real-Time Tracking (SAM-2)
-- Propagates masks and stable track IDs across frames.
-- Initialized from detector observations, then tracked through video.
-- **Output:** Persistent per-track identity and segmentation continuity.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [ngrok](https://ngrok.com) — for the Modal webhook tunnel
+- A [Modal](https://modal.com) account with the GPU worker deployed
+- Cloudflare R2 bucket credentials
 
-### ✅ Milestone 3: Team Classification (SigLIP + clustering)
-- Embeds player crops with SigLIP and assigns team clusters.
-- **Output:** Team assignment per track with consistent side labeling.
-
-### ✅ Milestone 4: Jersey OCR & Identity Mapping
-- Reads jersey numbers with SmolVLM2 and maps to roster players.
-- Includes aggregation and confidence gating for stability.
-- Added **annotated full-video export** with smooth interpolation and centered labels.
-
-### ✅ Milestone 5: Highlight Clip Extraction & Stitching
-**Goal achieved:** Auto-generate coach-ready highlight reels from derived game events.
-
-**Implemented scope:**
-- Event derivation from action detections + frame-level classes.
-- Clip extraction and reel stitching via ffmpeg.
-- Persistence layer for reels and clips:
-	- `highlight_reels`
-	- `highlight_clips`
-- Hybrid output model:
-	- Master reel (all events, all players)
-	- Optional minimal per-player reel (same pipeline, filtered by player)
-- Source modes for extraction:
-	- `source=clean` (raw source video)
-	- `source=annotated` (overlay source)
-- **Single-player annotation behavior (implemented):**
-	- For per-player reels with `source=annotated`, only the selected player is boxed/labeled.
-	- All other players remain unannotated.
-
-**Primary entry point:** `POST /api/videos/{job_id}/highlights/extract`
-
----
-
-### ✅ Milestone 6: Professional Personalized Reel Composition
-**Goal achieved:** Turn M5 raw per-player reels into polished, share-ready highlight products.
-
-**Implemented scope:**
-- Intro/title card with player identity, team/season metadata, and optional stats block.
-- Rich overlays: per-clip lower-thirds (player name/number + event chip) burned onto every clip.
-- Visual composition polish: broadcast-style color grade, sharpening, and timed fade transitions.
-- Music bed integration with game-audio ducking and loudnorm mastering.
-- Branding/watermark package (corner logo, configurable opacity).
-- 16:9 (landscape) and 9:16 (vertical social) export profiles.
-- Persistence layer: `composed_reels` table with full status lifecycle (`processing → completed/failed`).
-- Bug fix: temporal deduplication of overlapping clips from the same player/event-type (e.g. duplicate possession segments caused by brief detector drop-outs).
-
-**Primary entry point:** `POST /api/videos/{job_id}/highlights/{reel_id}/compose`
-
----
-
-## Next Steps: Fine-Tuning & Android Integration
-
-> The core pipeline (M1–M6) is fully operational. The remaining work falls into two tracks:
-
-**Backend fine-tuning:**
-- Further polish on composed reel aesthetics (fonts, color themes, transition timing).
-- Improved made/missed shot outcome detection.
-- Production hardening (authz, rate limiting, quotas, observability, billing).
-
-**Android app integration:**
-- Connect the Android (Kotlin) mobile frontend to the live API.
-- Video upload flow from device camera roll → `POST /api/videos/upload`.
-- Job status polling and progress display.
-- In-app highlight reel playback and download.
-- Player roster management (add/edit players, upload photos).
-
----
-
-## API Endpoints (Live)
-
-| Method | Endpoint | Purpose | Status |
-|--------|----------|---------|--------|
-| `POST` | `/api/videos/upload` | Create job and upload video | ✅ Live |
-| `GET` | `/api/videos/{job_id}` | Poll job status/progress | ✅ Live |
-| `GET` | `/api/videos/{job_id}/results` | Retrieve structured detections | ✅ Live |
-| `POST` | `/api/videos/{job_id}/exports/annotated` | Generate annotated full MP4 | ✅ Live |
-| `GET` | `/api/videos/{job_id}/exports/annotated/{export_id}` | Annotated export status | ✅ Live |
-| `GET` | `/api/videos/{job_id}/exports/annotated/{export_id}/download` | Download annotated MP4 | ✅ Live |
-| `POST` | `/api/videos/{job_id}/actions/auto` | Run action recognizer | ✅ Live |
-| `POST` | `/api/videos/{job_id}/highlights/extract` | Create M5 highlight reel | ✅ Live |
-| `GET` | `/api/videos/{job_id}/highlights/{reel_id}` | Reel metadata/status | ✅ Live |
-| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/download` | Download stitched reel | ✅ Live |
-| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/clips/{clip_id}/download` | Download single clip | ✅ Live |
-| `POST` | `/api/videos/{job_id}/highlights/{reel_id}/compose` | Create M6 composed reel | ✅ Live |
-| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/compose/{composed_id}` | Composed reel status | ✅ Live |
-| `GET` | `/api/videos/{job_id}/highlights/{reel_id}/compose/{composed_id}/download` | Download composed reel | ✅ Live |
-| `POST` | `/api/assets/music` | Upload a music track for M6 composition | ✅ Ready |
-| `POST` | `/api/assets/branding/logo` | Upload the StarHoop.ai brand logo | ✅ Ready |
-| `POST` | `/api/assets/players/photo` | Upload a player photo and attach it to `photo_url` | ✅ Ready |
-| `GET` | `/health/` | Health check | ✅ Live |
-
----
-
-## Database Schema (PostgreSQL)
-
-**Core tables:**
-- **video_jobs** — Job lifecycle, status, frame/progress metrics.
-- **detection_frames** — Per-frame detections JSON.
-- **jersey_detections** — Aggregated jersey mapping by track.
-- **action_detections** — Action windows and confidence.
-- **players / teams / coaches** — Roster and organization entities.
-
-**M5 tables:**
-- **highlight_reels** — Reel artifacts (`scope`, `player_id`, output metadata).
-- **highlight_clips** — Per-clip event metadata and clip artifact paths.
-
-**M6 tables:**
-- **composed_reels** — Polished composition artifacts (`aspect_ratio`, `music_track`, `has_intro`, `has_stats`, `has_watermark`, output metadata, status lifecycle).
-
----
-
-## How It Works: Request Lifecycle
-
-1. Coach uploads video via `POST /api/videos/upload`.
-2. FastAPI persists a `video_jobs` row and stores source media.
-3. Modal worker processes detection/tracking/classification/OCR.
-4. Webhook writes structured frame and identity outputs to PostgreSQL.
-5. Coach can export annotated full video.
-6. Coach can trigger action recognition.
-7. Coach triggers M5 highlights extraction (master or per-player).
-8. System extracts/stitches clips and persists reel + clip artifacts.
-9. Coach downloads final reel or individual clips.
-
----
-
-## Environment Configuration (.env)
-
-Use `.env.example` as the source template and provide environment-specific values.
-
-```env
-# PostgreSQL
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
-TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/starhoop
-
-# App
-APP_ENV=development
-
-# Modal orchestration
-ENABLE_MODAL_ORCHESTRATION=true
-MODAL_APP_NAME=hoopstar-cv
-MODAL_CLS_NAME=BasketballModels
-
-# Webhook
-WEBHOOK_BASE_URL=https://<your-ngrok-or-domain>
-WEBHOOK_HMAC_SECRET=<shared-secret>
-
-# Cloudflare R2
-R2_ACCOUNT_ID=<account>
-R2_ACCESS_KEY_ID=<key>
-R2_SECRET_ACCESS_KEY=<secret>
-R2_BUCKET=<bucket>
-R2_ENDPOINT_URL=
-R2_PRESIGN_EXPIRY_SEC=3600
-```
-
----
-
-## Development Workflow
-
-See `STARTUP_GUIDE.md` for full terminal-by-terminal startup flow.
+### 1. Configure environment
 
 ```bash
-# Start services
+cp .env.example .env
+# Fill in DATABASE_URL, R2 credentials, WEBHOOK_HMAC_SECRET, JWT_SECRET_KEY
+```
+
+### 2. Start the stack
+
+```bash
 docker compose up -d
-
-# Run migrations
-PYTHONPATH=src python -m alembic upgrade head
-
-# Health
-curl http://localhost:8000/health/
 ```
 
-### Asset Upload Locations
+### 3. Run database migrations
 
-- Music files are stored under `uploads/assets/music/`.
-- Brand logo files are stored under `uploads/assets/branding/`.
-- Player photos are stored under `uploads/assets/players/team_{team_id}/jersey_{jersey_number}/` and the saved path is written to `players.photo_url`.
-
-### Example Uploads
-
-```powershell
-# Music
-curl -X POST -F "file=@C:\path\to\theme.mp3" http://localhost:8000/api/assets/music
-
-# Brand logo
-curl -X POST -F "file=@C:\path\to\brand-logo.png" http://localhost:8000/api/assets/branding/logo
-
-# Player #14 photo (replace team_id with the correct team)
-curl -X POST -F "team_id=1" -F "jersey_number=14" -F "file=@C:\path\to\player14.jpg" http://localhost:8000/api/assets/players/photo
+```bash
+docker compose exec api alembic upgrade head
 ```
 
-### M5 Validation Quick Path (job 16 example)
+### 4. Open the ngrok tunnel
 
-```powershell
-# 1) actions
-$actions = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/actions/auto?min_confidence=0.6&max_actions=200"
+```bash
+ngrok http 8000
+# Copy the HTTPS URL into .env as WEBHOOK_BASE_URL
+```
 
-# 2) master reel
-$master = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=clean"
+### 5. Verify
 
-# 3) boxed single-player reel
-$player = Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/videos/16/highlights/extract?source=annotated&player_id=1"
+```bash
+curl http://localhost:8000/health
+# → {"status":"ok","database":"connected"}
+```
 
-# 4) download
-Invoke-WebRequest -Uri ("http://localhost:8000/api/videos/16/highlights/" + $player.reel_id + "/download") -OutFile "C:\Users\einav\OneDrive\Desktop\job16_player_boxed.mp4"
+Interactive API docs: **http://localhost:8000/docs**
+
+See [`docs/STARTUP_GUIDE.md`](docs/STARTUP_GUIDE.md) for the full step-by-step startup sequence and troubleshooting.
+
+---
+
+## API overview
+
+The full contract is documented live at `/docs` (Swagger UI) and `/openapi.json`. Key endpoint groups:
+
+| Group | Base path | Auth required |
+|-------|-----------|---------------|
+| Auth | `/api/auth/` | Register/login open; `/me` requires token |
+| Teams & roster | `/api/teams/` | Reads open; writes require Bearer token |
+| Video jobs | `/api/videos/` | All open |
+| Highlights | `/api/videos/{job_id}/highlights/` | All open |
+| Player mapping | `/api/videos/{job_id}/player_mapping/` | Open |
+| Assets | `/api/assets/` | Open |
+| Health | `/health/` | Open |
+
+Authentication uses **Bearer JWT** (`Authorization: Bearer <token>`). Tokens are valid for 30 days; re-login when expired (no refresh endpoint).
+
+See [`docs/BACKEND_API_CONTRACT.txt`](docs/BACKEND_API_CONTRACT.txt) for the complete request/response contract with examples.
+
+---
+
+## Configuration
+
+All settings live in `src/app/core/config.py` and are loaded from the `.env` file. Copy `.env.example` and fill in your values — never commit `.env`.
+
+Key settings:
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET_KEY` | Signs auth tokens — use a long random string in production |
+| `ENABLE_MODAL_ORCHESTRATION` | Set `true` to send jobs to Modal GPU workers |
+| `WEBHOOK_BASE_URL` | Public URL Modal uses to POST results back (your ngrok URL) |
+| `WEBHOOK_HMAC_SECRET` | Shared secret between API and Modal worker |
+| `R2_*` | Cloudflare R2 bucket credentials |
+
+CV pipeline behaviour is controlled by feature flags (all default `true` in `.env`): `DEDUP_BY_PLAYER`, `TRACK_CONSOLIDATION`, `ACTION_TEMPORAL_VOTING`, `OPPONENT_TEAM_GATE`, `OVERLAP_RESOLUTION`, `PERIODIC_REDETECT_INTERVAL`.
+
+---
+
+## Development
+
+```bash
+# Run tests (requires a running PostgreSQL)
+docker compose exec api pytest
+
+# Check API logs
+docker compose logs -f api
+
+# Apply a new migration
+docker compose exec api alembic upgrade head
+
+# Rebuild the image after dependency changes
+docker compose up -d --build api
 ```
 
 ---
 
-## Key Architectural Decisions
+## Docs
 
-| Decision | Rationale |
-|----------|-----------|
-| Modal GPU workers | Serverless scaling and reproducible inference runtime |
-| Cloudflare R2 | S3-compatible object storage with cost-efficient transfer |
-| FastAPI | Strong async API/webhook ergonomics |
-| PostgreSQL | ACID + robust relational model for analytics artifacts |
-| Docker Compose | Reproducible local stack and easy reset/testing |
-| ffmpeg extraction/stitching | Deterministic media pipeline for M5 |
+Additional documentation lives in [`docs/`](docs/):
 
----
-
-## Known Limitations & Next Work
-
-- Backend fine-tuning still in progress (aesthetics, shot-outcome accuracy, production hardening).
-- Android (Kotlin) mobile frontend integration not yet started.
-- Multi-camera and live-stream operation are out of current scope.
-- Production hardening opportunities remain (authz, quotas, observability, billing).
+| File | Contents |
+|------|----------|
+| [`STARTUP_GUIDE.md`](docs/STARTUP_GUIDE.md) | Full startup sequence and troubleshooting |
+| [`BACKEND_API_CONTRACT.txt`](docs/BACKEND_API_CONTRACT.txt) | Complete API contract for Android integration |
+| [`SCHEMA_DIAGRAM.md`](docs/SCHEMA_DIAGRAM.md) | Database entity-relationship diagram |
+| [`TECH_SPEC.md`](docs/TECH_SPEC.md) | Technical specification |
+| [`PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md) | Detailed project layout |
+| [`QUICK_REFERENCE.md`](docs/QUICK_REFERENCE.md) | Common commands cheat sheet |
+| [`android_app_instructions.md`](docs/android_app_instructions.md) | Android integration guide |
+| [`cv_phase2_finetuning.md`](docs/cv_phase2_finetuning.md) | CV model fine-tuning roadmap |
 
 ---
 
-## Contributing & Code Style
+## License
 
-- Python 3.12, FastAPI conventions, SQLAlchemy ORM.
-- Alembic for schema migration.
-- Black + lint checks.
-- Pytest for unit/integration validation.
-
----
-
-## Contact & License
-
-- Created: June 2026
-- Repo: GitHub (link)
-- License: set your intended license (MIT, Apache-2.0, or proprietary)
-
----
-
-**Last updated:** June 20, 2026 — Milestones 1–6 complete. Fine-tuning and Android integration next.
+Proprietary — all rights reserved.
